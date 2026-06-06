@@ -1,0 +1,62 @@
+# RemotePad
+
+RemotePad is an iPad-first remote development client for a continuously running Mac.
+
+The initial implementation starts with the shared protocol layer used by the future iPad app and Mac Agent.
+
+## Current Implementation
+
+- Swift Package scaffold
+- `RemotePadProtocol` library
+- RPAD frame encoder / decoder
+- Streaming frame decoder
+- JSON header helpers
+- Unit tests for frame round trips and parser behavior
+
+## Test
+
+```sh
+swift test
+```
+
+## Local Handshake Check
+
+Start the development agent:
+
+```sh
+swift run remotepad-agent
+```
+
+In another terminal, pass the printed agent port to the development client:
+
+```sh
+swift run remotepad-dev-client <port>
+```
+
+The client should print `received server.hello`, `received auth.result`, `received terminal.created`, `received terminal.list.result`, and `received terminal.output`.
+
+To verify reconnecting to an existing terminal, run the dev client again:
+
+```sh
+swift run remotepad-dev-client <port> --attach-first
+```
+
+The client should print `received terminal.attached` and terminal output containing `__REMOTEPAD_ATTACHED__`.
+The attach response also replays the terminal's recent output buffer before new output arrives.
+
+To verify closing a terminal:
+
+```sh
+swift run remotepad-dev-client <port> --close-after-ready
+```
+
+The client should print `received terminal.closed`. A later `--attach-first` run should show `terminals: 0`.
+
+Current authentication is a development placeholder: the agent accepts a non-empty `AuthProof.signature`. Production pairing will replace this with signed nonce verification against a trusted device key.
+
+## Docs
+
+- [Architecture](docs/architecture.md)
+- [MVP](docs/mvp.md)
+- [Technical Selection](docs/technical-selection.md)
+- [Protocol](docs/protocol.md)
