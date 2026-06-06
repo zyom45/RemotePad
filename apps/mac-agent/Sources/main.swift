@@ -269,6 +269,9 @@ final class AgentConnection {
         case "terminal.close":
             let message = try FrameCodec.decodeHeader(TerminalClose.self, from: frame)
             handleTerminalClose(message, channelID: frame.channelID, requestID: frame.requestID)
+        case "browser.request":
+            let message = try FrameCodec.decodeHeader(BrowserRequest.self, from: frame)
+            handleBrowserRequest(message, channelID: frame.channelID, requestID: frame.requestID, payload: frame.payload)
         case "ping":
             sendPong(requestID: frame.requestID)
         default:
@@ -448,6 +451,45 @@ final class AgentConnection {
 
         let closed = TerminalClosed(terminalID: message.terminalID, reason: "client_requested")
         sendHeader(closed, type: .response, channelID: channelID, requestID: requestID)
+    }
+
+    private func handleBrowserRequest(
+        _ message: BrowserRequest,
+        channelID: UInt32,
+        requestID: UInt32,
+        payload: Data
+    ) {
+        guard isAuthenticated else {
+            sendProtocolError(code: "auth_required", message: "Browser proxy requires authentication.", requestID: requestID)
+            return
+        }
+        guard configuration.permissions.browserProxy else {
+            sendProtocolError(code: "permission_denied", message: "Browser proxy permission is not granted.", requestID: requestID)
+            return
+        }
+
+        Task { [weak self] in
+            do {
+                let proxied = try await BrowserHTTPProxy.perform(message, body: payload)
+                await MainActor.run {
+                    self?.sendHeader(
+                        proxied.response,
+                        type: .response,
+                        channelID: channelID,
+                        requestID: requestID,
+                        payload: proxied.body
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    self?.sendProtocolError(
+                        code: "browser_target_unreachable",
+                        message: "\(error)",
+                        requestID: requestID
+                    )
+                }
+            }
+        }
     }
 
     private func sendTerminalOutput(terminalID: UUID, data: Data, channelID: UInt32) {
@@ -816,6 +858,56 @@ private func withCStringArray<Result>(
     pointers.append(nil)
     return try pointers.withUnsafeMutableBufferPointer { buffer in
         try body(buffer.baseAddress!)
+    }
+}
+
+struct ProxiedBrowserResponse {
+    var response: BrowserResponse
+    var body: Data
+}
+
+enum BrowserProxyError: Error {
+    case invalidURL
+    case invalidResponse
+}
+
+enum BrowserHTTPProxy {
+    static func perform(_ request: BrowserRequest, body: Data) async throws -> ProxiedBrowserResponse {
+        guard var components = URLComponents(string: "\(request.target.scheme)://\(request.target.host)") else {
+            throw BrowserProxyError.invalidURL
+        }
+        components.port = Int(request.target.port)
+        components.percentEncodedPath = request.target.path.hasPrefix("/")
+            ? request.target.path
+            : "/" + request.target.path
+
+        guard let url = components.url else {
+            throw BrowserProxyError.invalidURL
+        }
+
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = request.method
+        for (key, value) in request.headers {
+            urlRequest.setValue(value, forHTTPHeaderField: key)
+        }
+        if !body.isEmpty {
+            urlRequest.httpBody = body
+        }
+
+        let (responseBody, response) = try await URLSession.shared.data(for: urlRequest)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw BrowserProxyError.invalidResponse
+        }
+
+        let headers = httpResponse.allHeaderFields.reduce(into: [String: String]()) { result, entry in
+            guard let key = entry.key as? String else { return }
+            result[key] = String(describing: entry.value)
+        }
+
+        return ProxiedBrowserResponse(
+            response: BrowserResponse(status: httpResponse.statusCode, headers: headers),
+            body: responseBody
+        )
     }
 }
 

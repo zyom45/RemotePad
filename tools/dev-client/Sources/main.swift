@@ -6,22 +6,37 @@ import RemotePadProtocol
 struct RemotePadDevClientCommand {
     static func main() async throws {
         guard CommandLine.arguments.count >= 2, let port = UInt16(CommandLine.arguments[1]) else {
-            print("usage: swift run remotepad-dev-client <port> [--attach-first] [--close-after-ready]")
+            print("usage: swift run remotepad-dev-client <port> [--attach-first] [--close-after-ready] [--browser-get <local-port> [path]]")
             return
         }
 
+        let mode = parseMode(arguments: CommandLine.arguments)
         let client = DevClient(
             port: port,
-            mode: CommandLine.arguments.contains("--attach-first") ? .attachFirst : .create,
+            mode: mode,
             closeAfterReady: CommandLine.arguments.contains("--close-after-ready")
         )
         try await client.run()
+    }
+
+    private static func parseMode(arguments: [String]) -> DevClientMode {
+        if let index = arguments.firstIndex(of: "--browser-get"),
+           arguments.indices.contains(index + 1),
+           let port = UInt16(arguments[index + 1]) {
+            let path = arguments.indices.contains(index + 2) && !arguments[index + 2].hasPrefix("--")
+                ? arguments[index + 2]
+                : "/"
+            return .browserGet(BrowserTarget(port: port, path: path))
+        }
+
+        return arguments.contains("--attach-first") ? .attachFirst : .create
     }
 }
 
 enum DevClientMode {
     case create
     case attachFirst
+    case browserGet(BrowserTarget)
 }
 
 final class DevClient: @unchecked Sendable {
@@ -134,6 +149,8 @@ final class DevClient: @unchecked Sendable {
                                 self.sendTerminalCreate(on: connection)
                             case .attachFirst:
                                 self.sendTerminalList(on: connection)
+                            case .browserGet(let target):
+                                self.sendBrowserRequest(target: target, on: connection)
                             }
                         } else {
                             self.finish(connection: connection, continuation: continuation)
@@ -179,6 +196,16 @@ final class DevClient: @unchecked Sendable {
                         }
                         self.finish(connection: connection, continuation: continuation)
                         return
+                    } else if header.kind == "browser.response" {
+                        let response = try FrameCodec.decodeHeader(BrowserResponse.self, from: frame)
+                        print("received browser.response")
+                        print("  status: \(response.status)")
+                        if let contentType = response.headers["Content-Type"] ?? response.headers["content-type"] {
+                            print("  content-type: \(contentType)")
+                        }
+                        print(String(decoding: frame.payload, as: UTF8.self), terminator: "")
+                        self.finish(connection: connection, continuation: continuation)
+                        return
                     } else if header.kind == "terminal.list.result" {
                         let result = try FrameCodec.decodeHeader(TerminalListResult.self, from: frame)
                         print("received terminal.list.result")
@@ -186,12 +213,14 @@ final class DevClient: @unchecked Sendable {
                         for item in result.terminals {
                             print("  - \(item.terminalID) \(item.title) \(item.state.rawValue)")
                         }
-                        if self.mode == .attachFirst, let first = result.terminals.first {
-                            self.sendTerminalAttach(terminalID: first.terminalID, on: connection)
-                        } else if self.mode == .attachFirst {
-                            print("no terminal to attach")
-                            self.finish(connection: connection, continuation: continuation)
-                            return
+                        if case .attachFirst = self.mode {
+                            if let first = result.terminals.first {
+                                self.sendTerminalAttach(terminalID: first.terminalID, on: connection)
+                            } else {
+                                print("no terminal to attach")
+                                self.finish(connection: connection, continuation: continuation)
+                                return
+                            }
                         }
                     } else if header.kind == "terminal.attached" {
                         let attached = try FrameCodec.decodeHeader(TerminalAttached.self, from: frame)
@@ -354,6 +383,31 @@ final class DevClient: @unchecked Sendable {
             terminalOutputBuffer.contains("__REMOTEPAD_READY__")
         case .attachFirst:
             terminalOutputBuffer.contains("__REMOTEPAD_ATTACHED__")
+        case .browserGet:
+            false
+        }
+    }
+
+    private func sendBrowserRequest(target: BrowserTarget, on connection: NWConnection) {
+        let request = BrowserRequest(
+            method: "GET",
+            target: target,
+            headers: ["Accept": "*/*"]
+        )
+        do {
+            let data = try FrameCodec.encodeHeader(
+                request,
+                type: .request,
+                channelID: 3,
+                requestID: 8
+            )
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error {
+                    print("browser request send failed: \(error)")
+                }
+            })
+        } catch {
+            print("browser request encode failed: \(error)")
         }
     }
 

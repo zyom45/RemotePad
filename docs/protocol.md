@@ -351,6 +351,8 @@ Closed response:
 
 iPad から Mac 側 localhost へアクセスするためのプロキシです。
 
+初期実装では HTTP request / response のみ対応します。WebSocket、HMR、SSE は後続実装です。
+
 HTTP request:
 
 ```json

@@ -54,6 +54,20 @@ The client should print `received terminal.closed`. A later `--attach-first` run
 
 Current authentication is a development placeholder: the agent accepts a non-empty `AuthProof.signature`. Production pairing will replace this with signed nonce verification against a trusted device key.
 
+To verify the HTTP BrowserProxy path, start a local HTTP server:
+
+```sh
+python3 -m http.server 18080 --bind 127.0.0.1
+```
+
+Then ask the agent to fetch through the browser proxy:
+
+```sh
+swift run remotepad-dev-client <agent-port> --browser-get 18080 /README.md
+```
+
+The client should print `received browser.response` with status `200`.
+
 ## Docs
 
 - [Architecture](docs/architecture.md)
