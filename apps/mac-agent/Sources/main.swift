@@ -19,6 +19,8 @@ struct RemotePadAgentCommand {
 
         print("RemotePad Agent")
         print("  service: \(configuration.serviceType)")
+        print("  network: \(configuration.networkExposure.description)")
+        print("  discovery: \(configuration.publishesBonjour ? "bonjour" : "disabled")")
         print("  port: \(agent.port)")
         print("  device: \(configuration.deviceName)")
         print("  press Ctrl-C to stop")
@@ -53,6 +55,8 @@ struct AgentConfiguration {
     var serviceType: String
     var capabilities: CapabilitySet
     var permissions: Permissions
+    var networkExposure: NetworkExposure
+    var publishesBonjour: Bool
 
     static var `default`: AgentConfiguration {
         AgentConfiguration(
@@ -60,7 +64,9 @@ struct AgentConfiguration {
             deviceName: Host.current().localizedName ?? "RemotePad Mac",
             serviceType: "_remotepad._tcp",
             capabilities: .mvp,
-            permissions: .mvpDefault
+            permissions: .mvpDefault,
+            networkExposure: .loopbackOnly,
+            publishesBonjour: false
         )
     }
 
@@ -78,6 +84,20 @@ struct AgentConfiguration {
     }
 }
 
+enum NetworkExposure: Sendable {
+    case loopbackOnly
+    case localNetwork
+
+    var description: String {
+        switch self {
+        case .loopbackOnly:
+            return "loopback-only"
+        case .localNetwork:
+            return "local-network"
+        }
+    }
+}
+
 @MainActor
 final class RemotePadAgent {
     private let configuration: AgentConfiguration
@@ -92,12 +112,18 @@ final class RemotePadAgent {
 
     func start() throws {
         let parameters = NWParameters.tcp
+        if configuration.networkExposure == .loopbackOnly {
+            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+        }
+
         let listener = try NWListener(using: parameters, on: .any)
-        listener.service = NWListener.Service(
-            name: configuration.deviceName,
-            type: configuration.serviceType,
-            txtRecord: serviceTXTRecord
-        )
+        if configuration.publishesBonjour {
+            listener.service = NWListener.Service(
+                name: configuration.deviceName,
+                type: configuration.serviceType,
+                txtRecord: serviceTXTRecord
+            )
+        }
         listener.newConnectionHandler = { connection in
             Task { @MainActor in
                 self.accept(connection)

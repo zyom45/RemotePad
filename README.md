@@ -11,7 +11,13 @@ The initial implementation starts with the shared protocol layer used by the fut
 - RPAD frame encoder / decoder
 - Streaming frame decoder
 - JSON header helpers
-- Unit tests for frame round trips and parser behavior
+- Mac development agent with loopback-only TCP listener
+- Agent-managed PTY terminal create / attach / close
+- HTTP BrowserProxy spike for Mac localhost fetches
+- Development CLI client
+- Unit tests for frame, control, terminal, and browser proxy messages
+
+Current authentication is a development placeholder: the agent accepts a non-empty `AuthProof.signature`. Until signed nonce verification and pairing are implemented, the agent is intentionally restricted to `127.0.0.1` and does not publish Bonjour.
 
 ## Test
 
@@ -52,8 +58,6 @@ swift run remotepad-dev-client <port> --close-after-ready
 
 The client should print `received terminal.closed`. A later `--attach-first` run should show `terminals: 0`.
 
-Current authentication is a development placeholder: the agent accepts a non-empty `AuthProof.signature`. Production pairing will replace this with signed nonce verification against a trusted device key.
-
 To verify the HTTP BrowserProxy path, start a local HTTP server:
 
 ```sh
@@ -67,6 +71,8 @@ swift run remotepad-dev-client <agent-port> --browser-get 18080 /README.md
 ```
 
 The client should print `received browser.response` with status `200`.
+
+The current BrowserProxy path is a spike. The planned product path is an iPad-side local listener that forwards browser traffic over the RemotePad session to Mac `localhost`, so WebView origin behavior, WebSocket, HMR, SSE, and streaming responses can work correctly.
 
 ## Docs
 

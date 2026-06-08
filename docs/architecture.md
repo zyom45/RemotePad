@@ -50,8 +50,8 @@ flowchart LR
 
     subgraph Network["Connection Layer"]
         Local["Local LAN Discovery + Direct Link"]
-        VPN["Private Tunnel / VPN"]
-        Relay["Optional Secure Relay"]
+        LocalProxy["iPad Local Port Proxy"]
+        Relay["Optional E2E Relay"]
         WebRTC["Media + Data Channels"]
     end
 
@@ -92,10 +92,10 @@ flowchart LR
 
     ClientCrypto --> Pairing
     Pairing --> Local
-    Pairing --> VPN
+    Pairing --> LocalProxy
     Pairing --> Relay
     Local --> WebRTC
-    VPN --> WebRTC
+    LocalProxy --> DevBridge
     Relay --> WebRTC
 
     DevBridge --> Editor
@@ -164,14 +164,36 @@ Mac Host Agent は Mac に常駐するアプリまたはバックグラウンド
 接続パス:
 
 - ローカル LAN での直接接続。
-- 外出先接続用のプライベートメッシュ VPN。
-- 直接接続できない場合のセキュアリレー。
+- iPad 側ローカルポートから Mac 側 localhost へ接続する開発サーバープロキシ。
+- 直接接続できない場合の E2E セキュアリレー。
 
 推奨トランスポート:
 
 - 画面、音声、マイク、低遅延入力には WebRTC。
 - ペアリング、制御 API、状態取得、コマンド結果には HTTPS または WebSocket。
 - リレーを使う場合でもデバイス鍵に基づくエンドツーエンド暗号化。
+
+VPN / ZTNA / Tailscale / WireGuard は設計上の参考または検証手段として扱います。RemotePad の最終 UX は、別アプリの手動起動を前提にせず、Mac Agent と iPad App のセッション内に接続制御を内包します。
+
+### Browser Access Model
+
+開発サーバー確認では、WebView の origin と localhost の扱いが重要です。RemotePad は次のモデルを本命にします。
+
+```mermaid
+flowchart LR
+    WebView["iPad WebView<br/>http://127.0.0.1:rp-port"] --> LocalListener["iPad Local Listener"]
+    LocalListener --> Session["RemotePad E2E Session"]
+    Session --> Agent["Mac Agent"]
+    Agent --> DevServer["Mac localhost:3000 / 5173 / 8080"]
+```
+
+方針:
+
+- iPad WebView は iPad 側 `127.0.0.1` に接続する。
+- iPad App のローカルリスナーが RemotePad セッションへ変換する。
+- Mac Agent は Mac 側 `127.0.0.1:<target-port>` へ接続する。
+- HTTP request / response だけでなく、WebSocket、SSE、HMR、chunked response を扱える双方向ストリームを優先する。
+- 現在の HTTP-aware BrowserProxy は方式検証用であり、最終仕様ではローカルポートプロキシに統合する。
 
 ### Developer Tool Bridge
 
@@ -266,6 +288,29 @@ flowchart TD
 - 監査ログ: 接続端末、時刻、接続パス、操作、ファイル転送、コマンド実行。
 - Mac メニューバーからの緊急切断。
 - 閲覧のみモード。
+
+### 現在の実装ゲート
+
+本物のペアリングと署名検証が実装されるまでは、Mac Agent は開発用ローカル検証モードのみ許可します。
+
+- 待受は `127.0.0.1` のみに固定する。
+- Bonjour / mDNS のサービス公開は無効にする。
+- LAN IP、`0.0.0.0`、Relay、外出先接続では起動しない。
+- `AuthProof.signature` の非空チェックは開発用プレースホルダであり、信頼境界として扱わない。
+
+この制約を外す条件は、ペアリング済み公開鍵に対する署名検証、信頼済みMac/iPad IDの永続化、失効フロー、監査ログの最小実装が揃うことです。
+
+### Threat Model
+
+初期設計で明示的に扱う攻撃者:
+
+- 同一 LAN 上の攻撃者: Bonjour spoofing、接続試行、リプレイ、ポートスキャンを行える。
+- 悪意ある Relay: 経路情報とメタデータを観測できるが、セッション内容は読めない設計にする。
+- 紛失した iPad: Keychain 保護、Face ID / passcode、デバイス失効で被害を制限する。
+- 紛失または侵害された Mac: Mac 側の接続状態表示、緊急切断、端末失効、監査ログで検知と遮断を可能にする。
+- 開発サーバー由来のページ: WebView 内で任意の JavaScript が動く前提で、RemotePad 制御APIとWebView originを分離する。
+
+Discovery は信頼根ではありません。Bonjour / mDNS の情報は接続候補を見つけるためのヒントであり、信頼はペアリング時に保存した pinned public key と署名検証で確立します。
 
 ## 画面共有と入力
 
@@ -372,12 +417,16 @@ AI エージェント機能:
 
 - Mac Host Agent。
 - iPad App。
+- 仮認証中の loopback-only 安全ゲート。
+- フレーム仕様の固定。
 - ローカル LAN 検出。
 - 信頼済みデバイス鍵によるペアリング。
 - 認証済みローカルセッション。
 - Mac Agent 経由の Terminal セッション。
 - Terminal セッションの永続化。
 - Mac でローカル起動している開発サーバーへの iPad ブラウザ接続。
+- iPad ローカルポートプロキシ。
+- WebView localhost origin 検証。
 - 開発サーバー一覧。
 - Codex / Claude CLI ワークフロー。
 - 基本的な接続状態表示。
@@ -403,8 +452,9 @@ AI エージェント機能:
 
 ### Milestone 4: Remote Access
 
-- プライベートトンネルまたは VPN 対応。
-- 必要に応じたリレー対応。
+- アプリ層 E2E 暗号の確定。
+- 必要に応じた E2E リレー対応。
+- P2P 直接接続への昇格。
 - 外出先接続向けの強化ポリシー。
 - 接続品質の自動調整。
 - セッション監査ログ。
