@@ -155,7 +155,7 @@ sequenceDiagram
 }
 ```
 
-初期実装では汎用 `error` と `message` のみを返します。クライアントはこのエラーを受け取った場合、再試行せずアプリ更新を促します。
+クライアントはこのエラーを受け取った場合、再試行せずアプリ更新を促します。
 
 ## フレーム形式
 
@@ -201,7 +201,7 @@ Flags:
 - `acknowledgement`: 将来予約。
 - `error`: error response を示す。
 
-圧縮は capability exchange で合意した後にのみ使用します。合意前に `compressed` frame を受け取った場合は `unsupported_compression` または `protocol_error` として扱います。
+圧縮は capability exchange で合意した後にのみ使用します。現在の実装では圧縮交渉が未実装のため、`compressed` frame を受け取った場合は decode 時点で拒否します。
 
 Frame types:
 

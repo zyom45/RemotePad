@@ -73,6 +73,25 @@ import Testing
     #expect(decoded.reason == "not paired")
 }
 
+@Test func protocolErrorCanDescribeVersionMismatch() throws {
+    let error = ProtocolErrorMessage(
+        code: "protocol_version_unsupported",
+        message: "Client does not support protocol 1.",
+        requestID: 1,
+        supportedProtocols: [1],
+        minimumSupportedProtocol: 1
+    )
+
+    let frame = try FrameCodec.decode(
+        try FrameCodec.encodeHeader(error, type: .error, flags: [.error], channelID: 1, requestID: 1)
+    )
+    let decoded = try FrameCodec.decodeHeader(ProtocolErrorMessage.self, from: frame)
+
+    #expect(decoded == error)
+    #expect(decoded.supportedProtocols == [1])
+    #expect(decoded.minimumSupportedProtocol == 1)
+}
+
 private extension DeviceIdentity {
     static func fixture(deviceType: DeviceType) -> DeviceIdentity {
         DeviceIdentity(

@@ -9,6 +9,7 @@ public enum FrameCodecError: Error, Equatable {
     case invalidMagic
     case unsupportedVersion(UInt8)
     case unknownFrameType(UInt8)
+    case unsupportedCompression
     case headerTooLarge(Int)
     case payloadTooLarge(Int)
     case invalidHeader
@@ -127,6 +128,10 @@ public enum FrameCodec {
         }
 
         let flags = FrameFlags(rawValue: try cursor.readUInt16())
+        guard !flags.contains(.compressed) else {
+            throw FrameCodecError.unsupportedCompression
+        }
+
         let channelID = try cursor.readUInt32()
         let requestID = try cursor.readUInt32()
         let headerLength = Int(try cursor.readUInt32())

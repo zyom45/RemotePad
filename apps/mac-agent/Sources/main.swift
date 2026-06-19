@@ -311,11 +311,7 @@ final class AgentConnection {
 
     private func handleClientHello(_ message: ClientHello, requestID: UInt32) {
         guard message.supportedProtocols.contains(RemotePadProtocol.currentVersion) else {
-            sendProtocolError(
-                code: "protocol_version_unsupported",
-                message: "Client does not support protocol \(RemotePadProtocol.currentVersion).",
-                requestID: requestID
-            )
+            sendProtocolVersionUnsupported(requestID: requestID)
             return
         }
 
@@ -531,6 +527,17 @@ final class AgentConnection {
     private func sendProtocolError(code: String, message: String, requestID: UInt32?) {
         let error = ProtocolErrorMessage(code: code, message: message, requestID: requestID)
         sendHeader(error, type: .error, flags: [.error], channelID: 1, requestID: requestID ?? 0)
+    }
+
+    private func sendProtocolVersionUnsupported(requestID: UInt32) {
+        let error = ProtocolErrorMessage(
+            code: "protocol_version_unsupported",
+            message: "Client does not support protocol \(RemotePadProtocol.currentVersion).",
+            requestID: requestID,
+            supportedProtocols: [RemotePadProtocol.currentVersion],
+            minimumSupportedProtocol: RemotePadProtocol.currentVersion
+        )
+        sendHeader(error, type: .error, flags: [.error], channelID: 1, requestID: requestID)
     }
 
     private func sendHeader<Header: Encodable>(

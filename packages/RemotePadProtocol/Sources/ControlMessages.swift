@@ -285,16 +285,22 @@ public struct ProtocolErrorMessage: Codable, Equatable, Sendable {
     public var code: String
     public var message: String
     public var requestID: UInt32?
+    public var supportedProtocols: [UInt8]?
+    public var minimumSupportedProtocol: UInt8?
 
     public init(
         code: String,
         message: String,
-        requestID: UInt32? = nil
+        requestID: UInt32? = nil,
+        supportedProtocols: [UInt8]? = nil,
+        minimumSupportedProtocol: UInt8? = nil
     ) {
         self.kind = "error"
         self.code = code
         self.message = message
         self.requestID = requestID
+        self.supportedProtocols = supportedProtocols
+        self.minimumSupportedProtocol = minimumSupportedProtocol
     }
 
     enum CodingKeys: String, CodingKey {
@@ -302,5 +308,7 @@ public struct ProtocolErrorMessage: Codable, Equatable, Sendable {
         case code
         case message
         case requestID = "request_id"
+        case supportedProtocols = "supported_protocols"
+        case minimumSupportedProtocol = "minimum_supported_protocol"
     }
 }

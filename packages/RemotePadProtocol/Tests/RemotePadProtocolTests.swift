@@ -104,6 +104,22 @@ import Foundation
     }
 }
 
+@Test func rejectsCompressedFrameBeforeNegotiation() throws {
+    let encoded = try FrameCodec.encode(
+        Frame(
+            type: .data,
+            flags: [.compressed],
+            channelID: 2,
+            header: Data(#"{"kind":"terminal.output"}"#.utf8),
+            payload: Data([0x01, 0x02])
+        )
+    )
+
+    #expect(throws: FrameCodecError.unsupportedCompression) {
+        _ = try FrameCodec.decode(encoded)
+    }
+}
+
 private struct TerminalCreateHeader: Codable, Equatable {
     var kind: String
     var shell: String
