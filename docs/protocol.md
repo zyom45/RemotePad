@@ -22,9 +22,9 @@
 
 実装ゲート:
 
-- 現在の開発実装では `AuthProof` が非空署名を受け入れるプレースホルダである。
-- この状態では Mac Agent は `127.0.0.1` のみで待ち受け、Bonjour / mDNS を公開しない。
-- LAN Discovery、LAN 待受、Relay 接続は、署名検証の実装後に有効化する。
+- 現在の開発実装では署名チャレンジ検証を行う。
+- UI ペアリング、Mac 側承認、デバイス失効、監査ログが未実装のため、Mac Agent は `127.0.0.1` のみで待ち受け、Bonjour / mDNS を公開しない。
+- LAN Discovery、LAN 待受、Relay 接続は、ペアリングと失効フローの実装後に有効化する。
 
 ### 将来
 
@@ -126,9 +126,9 @@ sequenceDiagram
     participant M as Mac Agent
 
     I->>M: TLS connect
-    I->>M: ClientHello(device_id, nonce, supported_protocols)
+    I->>M: ClientHello(device_id, nonce, supported_protocols, public_key?)
     M->>I: ServerHello(device_id, nonce, capabilities)
-    I->>M: AuthProof(signature(client_nonce + server_nonce))
+    I->>M: AuthProof(signature(auth_transcript))
     M->>I: AuthResult(accepted, session_id, permissions)
     I->>M: OpenChannel(Control)
     I->>M: OpenChannel(Terminal)
@@ -136,7 +136,9 @@ sequenceDiagram
 
 セッション開始時に能力交換を行い、利用可能なチャネルと権限を確定します。
 
-実装初期段階では、`AuthProof` は非空署名を受け入れる開発用プレースホルダです。本実装では、ペアリング済み端末の公開鍵を使って `client_nonce + server_nonce` への署名を検証します。
+現在の開発実装では、dev-client が Curve25519 signing public key を `ClientHello.public_key` で送り、`RemotePad auth v1` transcript に署名します。Mac Agent は初回接続時のみ loopback-only の開発用 trust-on-first-use で公開鍵を保存し、以後は保存済み公開鍵で `AuthProof.signature` を検証します。
+
+本実装では、初回ペアリング時に Mac 側の明示承認を必須にし、保存済みの信頼済み公開鍵だけを使います。`ClientHello.public_key` は未ペアリング時の候補情報であり、信頼済み端末の認証根としては扱いません。
 
 ### protocol_version_unsupported
 

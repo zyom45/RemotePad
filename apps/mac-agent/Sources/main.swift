@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 import Network
 import RemotePadProtocol
 
@@ -57,6 +58,7 @@ struct AgentConfiguration {
     var permissions: Permissions
     var networkExposure: NetworkExposure
     var publishesBonjour: Bool
+    var allowsDevelopmentTrustOnFirstUse: Bool
 
     static var `default`: AgentConfiguration {
         AgentConfiguration(
@@ -66,7 +68,8 @@ struct AgentConfiguration {
             capabilities: .mvp,
             permissions: .mvpDefault,
             networkExposure: .loopbackOnly,
-            publishesBonjour: false
+            publishesBonjour: false,
+            allowsDevelopmentTrustOnFirstUse: true
         )
     }
 
@@ -104,6 +107,7 @@ final class RemotePadAgent {
     private var listener: NWListener?
     private var connections: [UUID: AgentConnection] = [:]
     private let terminalStore = TerminalStore()
+    private let trustedDeviceStore = TrustedDeviceStore()
     private(set) var port: UInt16 = 0
 
     init(configuration: AgentConfiguration) {
@@ -154,6 +158,7 @@ final class RemotePadAgent {
             nwConnection: nwConnection,
             configuration: configuration,
             terminalStore: terminalStore,
+            trustedDeviceStore: trustedDeviceStore,
             onClose: { [weak self] id in
                 self?.connections[id] = nil
             }
@@ -199,10 +204,13 @@ final class AgentConnection {
     private let nwConnection: NWConnection
     private let configuration: AgentConfiguration
     private let terminalStore: TerminalStore
+    private let trustedDeviceStore: TrustedDeviceStore
     private let decoder = FrameStreamDecoder()
     private let onClose: (UUID) -> Void
+    private var clientDeviceID: UUID?
     private var clientNonce: Data?
     private var serverNonce: Data?
+    private var offeredClientPublicKey: Data?
     private var sessionID: UUID?
     private var isAuthenticated = false
 
@@ -210,11 +218,13 @@ final class AgentConnection {
         nwConnection: NWConnection,
         configuration: AgentConfiguration,
         terminalStore: TerminalStore,
+        trustedDeviceStore: TrustedDeviceStore,
         onClose: @escaping (UUID) -> Void
     ) {
         self.nwConnection = nwConnection
         self.configuration = configuration
         self.terminalStore = terminalStore
+        self.trustedDeviceStore = trustedDeviceStore
         self.onClose = onClose
     }
 
@@ -315,7 +325,9 @@ final class AgentConnection {
             return
         }
 
+        clientDeviceID = message.deviceID
         clientNonce = message.nonce
+        offeredClientPublicKey = message.publicKey
         let nonce = Data.randomBytes(count: 32)
         serverNonce = nonce
         let response = ServerHello(
@@ -327,15 +339,24 @@ final class AgentConnection {
     }
 
     private func handleAuthProof(_ message: AuthProof, requestID: UInt32) {
-        guard clientNonce != nil, serverNonce != nil else {
+        guard let clientDeviceID, let clientNonce, let serverNonce else {
             sendAuthRejected(reason: "hello_required", requestID: requestID)
             return
         }
 
-        // Development-only authentication placeholder.
-        // Production will verify a signature over client/server nonce using the paired device key.
-        guard !message.signature.isEmpty else {
-            sendAuthRejected(reason: "empty_signature", requestID: requestID)
+        guard let publicKey = trustedPublicKey(for: clientDeviceID) else {
+            sendAuthRejected(reason: "device_not_trusted", requestID: requestID)
+            return
+        }
+
+        let transcript = AuthTranscript.make(
+            clientDeviceID: clientDeviceID,
+            clientNonce: clientNonce,
+            serverDeviceID: configuration.deviceID,
+            serverNonce: serverNonce
+        )
+        guard verify(signature: message.signature, for: transcript, publicKey: publicKey) else {
+            sendAuthRejected(reason: "invalid_signature", requestID: requestID)
             return
         }
 
@@ -349,6 +370,29 @@ final class AgentConnection {
             permissions: configuration.permissions
         )
         sendHeader(result, type: .response, channelID: 1, requestID: requestID)
+    }
+
+    private func trustedPublicKey(for deviceID: UUID) -> Data? {
+        if let publicKey = trustedDeviceStore.publicKey(for: deviceID) {
+            return publicKey
+        }
+
+        guard configuration.allowsDevelopmentTrustOnFirstUse, let publicKey = offeredClientPublicKey else {
+            return nil
+        }
+
+        trustedDeviceStore.trust(publicKey: publicKey, for: deviceID)
+        print("trusted development client \(deviceID)")
+        return publicKey
+    }
+
+    private func verify(signature: Data, for transcript: Data, publicKey: Data) -> Bool {
+        do {
+            let signingKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKey)
+            return signingKey.isValidSignature(signature, for: transcript)
+        } catch {
+            return false
+        }
     }
 
     private func sendAuthRejected(reason: String, requestID: UInt32) {
@@ -590,6 +634,37 @@ final class AgentConnection {
         terminalStore.unsubscribeConnection(id)
         nwConnection.cancel()
         onClose(id)
+    }
+}
+
+final class TrustedDeviceStore {
+    private let defaults = UserDefaults.standard
+    private let key = "RemotePadTrustedDevicePublicKeys"
+
+    func publicKey(for deviceID: UUID) -> Data? {
+        allKeys()[deviceID.uuidString]
+    }
+
+    func trust(publicKey: Data, for deviceID: UUID) {
+        var keys = allKeys()
+        keys[deviceID.uuidString] = publicKey
+        defaults.set(encode(keys), forKey: key)
+    }
+
+    private func allKeys() -> [String: Data] {
+        guard let encoded = defaults.dictionary(forKey: key) as? [String: String] else {
+            return [:]
+        }
+
+        return encoded.reduce(into: [String: Data]()) { result, entry in
+            if let data = Data(base64Encoded: entry.value) {
+                result[entry.key] = data
+            }
+        }
+    }
+
+    private func encode(_ keys: [String: Data]) -> [String: String] {
+        keys.mapValues { $0.base64EncodedString() }
     }
 }
 

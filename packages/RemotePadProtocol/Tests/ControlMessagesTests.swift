@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import RemotePadProtocol
 
@@ -22,7 +23,8 @@ import Testing
 @Test func sessionHandshakeMessagesRoundTrip() throws {
     let deviceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     let nonce = Data([1, 2, 3, 4])
-    let hello = ClientHello(deviceID: deviceID, nonce: nonce)
+    let publicKey = Data(repeating: 0xaa, count: 32)
+    let hello = ClientHello(deviceID: deviceID, nonce: nonce, publicKey: publicKey)
 
     let clientFrame = try FrameCodec.decode(
         try FrameCodec.encodeHeader(hello, type: .request, channelID: 1)
@@ -30,6 +32,7 @@ import Testing
     let decodedHello = try FrameCodec.decodeHeader(ClientHello.self, from: clientFrame)
 
     #expect(decodedHello == hello)
+    #expect(decodedHello.publicKey == publicKey)
 
     let server = ServerHello(
         deviceID: deviceID,
@@ -43,6 +46,43 @@ import Testing
 
     #expect(decodedServer == server)
     #expect(decodedServer.capabilities.channels.contains(.browserProxy))
+}
+
+@Test func authTranscriptIsDeterministic() {
+    let clientDeviceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    let serverDeviceID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+
+    let first = AuthTranscript.make(
+        clientDeviceID: clientDeviceID,
+        clientNonce: Data([0x01, 0x02]),
+        serverDeviceID: serverDeviceID,
+        serverNonce: Data([0x03, 0x04])
+    )
+    let second = AuthTranscript.make(
+        clientDeviceID: clientDeviceID,
+        clientNonce: Data([0x01, 0x02]),
+        serverDeviceID: serverDeviceID,
+        serverNonce: Data([0x03, 0x04])
+    )
+
+    #expect(first == second)
+    #expect(first != Data([0x01, 0x02, 0x03, 0x04]))
+}
+
+@Test func authTranscriptCanBeSignedAndVerified() throws {
+    let privateKey = Curve25519.Signing.PrivateKey()
+    let publicKey = privateKey.publicKey
+    let transcript = AuthTranscript.make(
+        clientDeviceID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+        clientNonce: Data([0x01, 0x02]),
+        serverDeviceID: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+        serverNonce: Data([0x03, 0x04])
+    )
+
+    let signature = try privateKey.signature(for: transcript)
+
+    #expect(publicKey.isValidSignature(signature, for: transcript))
+    #expect(!publicKey.isValidSignature(signature, for: transcript + Data([0xff])))
 }
 
 @Test func permissionsDefaultMatchesMVP() {

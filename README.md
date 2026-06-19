@@ -17,7 +17,7 @@ The initial implementation starts with the shared protocol layer used by the fut
 - Development CLI client
 - Unit tests for frame, control, terminal, and browser proxy messages
 
-Current authentication is a development placeholder: the agent accepts a non-empty `AuthProof.signature`. Until signed nonce verification and pairing are implemented, the agent is intentionally restricted to `127.0.0.1` and does not publish Bonjour.
+Current authentication uses a signed nonce challenge. The development client sends a Curve25519 signing public key in `ClientHello`, signs the auth transcript, and the agent verifies `AuthProof.signature`. Until real pairing UI, device approval, revocation, and audit logs are implemented, the agent still uses loopback-only development trust-on-first-use and does not publish Bonjour.
 
 ## Test
 

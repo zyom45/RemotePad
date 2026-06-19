@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Network
 import RemotePadProtocol
 
@@ -43,9 +44,13 @@ final class DevClient: @unchecked Sendable {
     private let port: UInt16
     private let mode: DevClientMode
     private let closeAfterReady: Bool
+    private let identity: DevClientIdentity
     private let decoder = FrameStreamDecoder()
     private let queue = DispatchQueue(label: "RemotePadDevClient")
     private var connection: NWConnection?
+    private var clientNonce: Data?
+    private var serverDeviceID: UUID?
+    private var serverNonce: Data?
     private var didSendAuthProof = false
     private var didSendTerminalCreate = false
     private var didSendTerminalList = false
@@ -58,6 +63,7 @@ final class DevClient: @unchecked Sendable {
         self.port = port
         self.mode = mode
         self.closeAfterReady = closeAfterReady
+        self.identity = DevClientIdentity.loadOrCreate()
     }
 
     func run() async throws {
@@ -87,9 +93,12 @@ final class DevClient: @unchecked Sendable {
     }
 
     private func sendClientHello(on connection: NWConnection) {
+        let nonce = Data.randomBytes(count: 32)
+        clientNonce = nonce
         let hello = ClientHello(
-            deviceID: UUID(),
-            nonce: Data([0, 1, 2, 3])
+            deviceID: identity.deviceID,
+            nonce: nonce,
+            publicKey: identity.publicKey
         )
         do {
             let data = try FrameCodec.encodeHeader(
@@ -135,6 +144,8 @@ final class DevClient: @unchecked Sendable {
                         print("  device_id: \(hello.deviceID)")
                         print("  protocol: \(hello.capabilities.protocolVersion)")
                         print("  capabilities: \(hello.capabilities.channels.map(\.rawValue).joined(separator: ","))")
+                        self.serverDeviceID = hello.deviceID
+                        self.serverNonce = hello.nonce
                         self.sendAuthProof(on: connection)
                     } else if header.kind == "auth.result" {
                         let result = try FrameCodec.decodeHeader(AuthResult.self, from: frame)
@@ -250,7 +261,18 @@ final class DevClient: @unchecked Sendable {
         guard !didSendAuthProof else { return }
         didSendAuthProof = true
 
-        let proof = AuthProof(signature: Data([0xaa, 0xbb, 0xcc]))
+        guard let clientNonce, let serverDeviceID, let serverNonce else {
+            print("auth proof skipped: missing challenge material")
+            return
+        }
+
+        let transcript = AuthTranscript.make(
+            clientDeviceID: identity.deviceID,
+            clientNonce: clientNonce,
+            serverDeviceID: serverDeviceID,
+            serverNonce: serverNonce
+        )
+        let proof = AuthProof(signature: identity.sign(transcript))
         do {
             let data = try FrameCodec.encodeHeader(
                 proof,
@@ -419,5 +441,49 @@ final class DevClient: @unchecked Sendable {
         didFinish = true
         connection.cancel()
         continuation.resume()
+    }
+}
+
+struct DevClientIdentity {
+    let deviceID: UUID
+    let privateKey: Curve25519.Signing.PrivateKey
+
+    var publicKey: Data {
+        privateKey.publicKey.rawRepresentation
+    }
+
+    static func loadOrCreate() -> DevClientIdentity {
+        let defaults = UserDefaults.standard
+        let deviceIDKey = "RemotePadDevClientDeviceID"
+        let privateKeyKey = "RemotePadDevClientPrivateKey"
+
+        if let deviceIDString = defaults.string(forKey: deviceIDKey),
+           let deviceID = UUID(uuidString: deviceIDString),
+           let privateKeyString = defaults.string(forKey: privateKeyKey),
+           let privateKeyData = Data(base64Encoded: privateKeyString),
+           let privateKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData) {
+            return DevClientIdentity(deviceID: deviceID, privateKey: privateKey)
+        }
+
+        let deviceID = UUID()
+        let privateKey = Curve25519.Signing.PrivateKey()
+        defaults.set(deviceID.uuidString, forKey: deviceIDKey)
+        defaults.set(privateKey.rawRepresentation.base64EncodedString(), forKey: privateKeyKey)
+        return DevClientIdentity(deviceID: deviceID, privateKey: privateKey)
+    }
+
+    func sign(_ data: Data) -> Data {
+        (try? privateKey.signature(for: data)) ?? Data()
+    }
+}
+
+private extension Data {
+    static func randomBytes(count: Int) -> Data {
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(count)
+        for _ in 0..<count {
+            bytes.append(UInt8.random(in: UInt8.min...UInt8.max))
+        }
+        return Data(bytes)
     }
 }

@@ -171,16 +171,19 @@ public struct ClientHello: Codable, Equatable, Sendable {
     public var deviceID: UUID
     public var nonce: Data
     public var supportedProtocols: [UInt8]
+    public var publicKey: Data?
 
     public init(
         deviceID: UUID,
         nonce: Data,
-        supportedProtocols: [UInt8] = [RemotePadProtocol.currentVersion]
+        supportedProtocols: [UInt8] = [RemotePadProtocol.currentVersion],
+        publicKey: Data? = nil
     ) {
         self.kind = "client.hello"
         self.deviceID = deviceID
         self.nonce = nonce
         self.supportedProtocols = supportedProtocols
+        self.publicKey = publicKey
     }
 
     enum CodingKeys: String, CodingKey {
@@ -188,6 +191,7 @@ public struct ClientHello: Codable, Equatable, Sendable {
         case deviceID = "device_id"
         case nonce
         case supportedProtocols = "supported_protocols"
+        case publicKey = "public_key"
     }
 }
 
@@ -310,5 +314,44 @@ public struct ProtocolErrorMessage: Codable, Equatable, Sendable {
         case requestID = "request_id"
         case supportedProtocols = "supported_protocols"
         case minimumSupportedProtocol = "minimum_supported_protocol"
+    }
+}
+
+public enum AuthTranscript {
+    public static func make(
+        clientDeviceID: UUID,
+        clientNonce: Data,
+        serverDeviceID: UUID,
+        serverNonce: Data,
+        protocolVersion: UInt8 = RemotePadProtocol.currentVersion
+    ) -> Data {
+        var data = Data("RemotePad auth v1".utf8)
+        data.append(protocolVersion)
+        data.appendUUID(clientDeviceID)
+        data.appendLengthPrefixed(clientNonce)
+        data.appendUUID(serverDeviceID)
+        data.appendLengthPrefixed(serverNonce)
+        return data
+    }
+}
+
+private extension Data {
+    mutating func appendUUID(_ uuid: UUID) {
+        var value = uuid.uuid
+        Swift.withUnsafeBytes(of: &value) { rawBuffer in
+            append(rawBuffer.bindMemory(to: UInt8.self))
+        }
+    }
+
+    mutating func appendLengthPrefixed(_ value: Data) {
+        appendUInt32(UInt32(value.count))
+        append(value)
+    }
+
+    mutating func appendUInt32(_ value: UInt32) {
+        append(UInt8((value >> 24) & 0xff))
+        append(UInt8((value >> 16) & 0xff))
+        append(UInt8((value >> 8) & 0xff))
+        append(UInt8(value & 0xff))
     }
 }

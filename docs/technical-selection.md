@@ -49,9 +49,10 @@ Terminal は通常 SSH ではなく、Mac Agent が PTY を起動し、RemotePad
 
 実装ゲート:
 
-- 署名検証が未実装の間は、Mac Agent は `127.0.0.1` のみに待ち受ける。
-- 署名検証が未実装の間は、Bonjour / mDNS を公開しない。
-- LAN 直結は、ペアリング済み公開鍵による署名チャレンジが入った後に有効化する。
+- 署名チャレンジ検証は実装済み。
+- UI ペアリング、Mac 側承認、デバイス失効、監査ログが未実装の間は、Mac Agent は `127.0.0.1` のみに待ち受ける。
+- UI ペアリング、Mac 側承認、デバイス失効、監査ログが未実装の間は、Bonjour / mDNS を公開しない。
+- LAN 直結は、ペアリング済み公開鍵による署名チャレンジと失効フローが入った後に有効化する。
 
 ### 4. 外出先接続は VPN 内蔵より E2E Relay 優先
 
@@ -205,7 +206,7 @@ RemotePad/
 
 - `apps/ipad/`
 - `packages/RemotePadCore/`
-- 本物のペアリングと署名検証
+- 本物の UI ペアリング、Mac 側承認、デバイス失効
 - LAN Discovery
 - iPad WebView / local listener
 - E2E Relay
