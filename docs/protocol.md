@@ -136,7 +136,7 @@ sequenceDiagram
 
 セッション開始時に能力交換を行い、利用可能なチャネルと権限を確定します。
 
-現在の開発実装では、dev-client が Curve25519 signing public key を `ClientHello.public_key` で送り、`RemotePad auth v1` transcript に署名します。Mac Agent は初回接続時のみ loopback-only の開発用 trust-on-first-use で公開鍵を保存し、以後は保存済み公開鍵で `AuthProof.signature` を検証します。
+現在の開発実装では、dev-client が Curve25519 signing public key を `ClientHello.public_key` で送り、`RemotePad auth v1` transcript に署名します。Mac Agent は明示的に登録された公開鍵だけを信頼し、保存済み公開鍵で `AuthProof.signature` を検証します。
 
 本実装では、初回ペアリング時に Mac 側の明示承認を必須にし、保存済みの信頼済み公開鍵だけを使います。`ClientHello.public_key` は未ペアリング時の候補情報であり、信頼済み端末の認証根としては扱いません。
 

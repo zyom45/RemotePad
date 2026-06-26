@@ -8,6 +8,10 @@ import RemotePadProtocol
 struct RemotePadAgentCommand {
     @MainActor
     static func main() async throws {
+        if handleUtilityCommand(arguments: CommandLine.arguments) {
+            return
+        }
+
         let configuration = AgentConfiguration.default
         let agent = RemotePadAgent(configuration: configuration)
         let signalSources = installSignalHandlers {
@@ -28,6 +32,82 @@ struct RemotePadAgentCommand {
 
         await waitForever()
         _ = signalSources
+    }
+
+    private static func handleUtilityCommand(arguments: [String]) -> Bool {
+        guard arguments.count >= 2 else { return false }
+
+        let store = TrustedDeviceStore()
+        switch arguments[1] {
+        case "--trust-device":
+            guard arguments.count == 4,
+                  let deviceID = UUID(uuidString: arguments[2]),
+                  let publicKey = Data(base64Encoded: arguments[3]),
+                  isValidSigningPublicKey(publicKey) else {
+                print("usage: swift run remotepad-agent --trust-device <device-id> <public-key-base64>")
+                return true
+            }
+
+            store.trust(publicKey: publicKey, for: deviceID)
+            print("trusted device: \(deviceID)")
+            print("fingerprint: \(fingerprint(publicKey))")
+            return true
+
+        case "--list-trusted":
+            let devices = store.list()
+            if devices.isEmpty {
+                print("no trusted devices")
+            } else {
+                for device in devices {
+                    print("\(device.deviceID.uuidString) \(device.publicKey.base64EncodedString()) \(fingerprint(device.publicKey))")
+                }
+            }
+            return true
+
+        case "--revoke-device":
+            guard arguments.count == 3, let deviceID = UUID(uuidString: arguments[2]) else {
+                print("usage: swift run remotepad-agent --revoke-device <device-id>")
+                return true
+            }
+
+            if store.revoke(deviceID: deviceID) {
+                print("revoked device: \(deviceID)")
+            } else {
+                print("device not trusted: \(deviceID)")
+            }
+            return true
+
+        case "--clear-trusted-devices":
+            store.removeAll()
+            print("cleared trusted devices")
+            return true
+
+        case "--help":
+            printUsage()
+            return true
+
+        default:
+            return false
+        }
+    }
+
+    private static func printUsage() {
+        print("""
+        usage:
+          swift run remotepad-agent
+          swift run remotepad-agent --trust-device <device-id> <public-key-base64>
+          swift run remotepad-agent --list-trusted
+          swift run remotepad-agent --revoke-device <device-id>
+          swift run remotepad-agent --clear-trusted-devices
+        """)
+    }
+
+    private static func isValidSigningPublicKey(_ data: Data) -> Bool {
+        (try? Curve25519.Signing.PublicKey(rawRepresentation: data)) != nil
+    }
+
+    private static func fingerprint(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private static func waitForever() async {
@@ -69,7 +149,7 @@ struct AgentConfiguration {
             permissions: .mvpDefault,
             networkExposure: .loopbackOnly,
             publishesBonjour: false,
-            allowsDevelopmentTrustOnFirstUse: true
+            allowsDevelopmentTrustOnFirstUse: false
         )
     }
 
@@ -638,6 +718,11 @@ final class AgentConnection {
 }
 
 final class TrustedDeviceStore {
+    struct Entry {
+        var deviceID: UUID
+        var publicKey: Data
+    }
+
     private let defaults = UserDefaults.standard
     private let key = "RemotePadTrustedDevicePublicKeys"
 
@@ -645,10 +730,32 @@ final class TrustedDeviceStore {
         allKeys()[deviceID.uuidString]
     }
 
+    func list() -> [Entry] {
+        allKeys()
+            .compactMap { key, publicKey -> Entry? in
+                guard let deviceID = UUID(uuidString: key) else { return nil }
+                return Entry(deviceID: deviceID, publicKey: publicKey)
+            }
+            .sorted { $0.deviceID.uuidString < $1.deviceID.uuidString }
+    }
+
     func trust(publicKey: Data, for deviceID: UUID) {
         var keys = allKeys()
         keys[deviceID.uuidString] = publicKey
         defaults.set(encode(keys), forKey: key)
+    }
+
+    func revoke(deviceID: UUID) -> Bool {
+        var keys = allKeys()
+        guard keys.removeValue(forKey: deviceID.uuidString) != nil else {
+            return false
+        }
+        defaults.set(encode(keys), forKey: key)
+        return true
+    }
+
+    func removeAll() {
+        defaults.removeObject(forKey: key)
     }
 
     private func allKeys() -> [String: Data] {

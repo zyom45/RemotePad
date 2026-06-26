@@ -17,7 +17,21 @@ The initial implementation starts with the shared protocol layer used by the fut
 - Development CLI client
 - Unit tests for frame, control, terminal, and browser proxy messages
 
-Current authentication uses a signed nonce challenge. The development client sends a Curve25519 signing public key in `ClientHello`, signs the auth transcript, and the agent verifies `AuthProof.signature`. Until real pairing UI, device approval, revocation, and audit logs are implemented, the agent still uses loopback-only development trust-on-first-use and does not publish Bonjour.
+Current authentication uses a signed nonce challenge. The development client sends a Curve25519 signing public key in `ClientHello`, signs the auth transcript, and the agent verifies `AuthProof.signature`. Until real pairing UI and audit logs are implemented, trusted devices are managed with explicit development CLI commands and the agent remains loopback-only without Bonjour.
+
+To trust the development client:
+
+```sh
+swift run remotepad-dev-client --identity
+swift run remotepad-agent --trust-device <device-id> <public-key-base64>
+```
+
+To inspect or revoke trusted devices:
+
+```sh
+swift run remotepad-agent --list-trusted
+swift run remotepad-agent --revoke-device <device-id>
+```
 
 ## Test
 

@@ -6,8 +6,12 @@ import RemotePadProtocol
 @main
 struct RemotePadDevClientCommand {
     static func main() async throws {
+        if handleUtilityCommand(arguments: CommandLine.arguments) {
+            return
+        }
+
         guard CommandLine.arguments.count >= 2, let port = UInt16(CommandLine.arguments[1]) else {
-            print("usage: swift run remotepad-dev-client <port> [--attach-first] [--close-after-ready] [--browser-get <local-port> [path]]")
+            printUsage()
             return
         }
 
@@ -18,6 +22,48 @@ struct RemotePadDevClientCommand {
             closeAfterReady: CommandLine.arguments.contains("--close-after-ready")
         )
         try await client.run()
+    }
+
+    private static func handleUtilityCommand(arguments: [String]) -> Bool {
+        guard arguments.count >= 2 else { return false }
+
+        switch arguments[1] {
+        case "--identity":
+            let identity = DevClientIdentity.loadOrCreate()
+            print("device_id: \(identity.deviceID)")
+            print("public_key: \(identity.publicKey.base64EncodedString())")
+            print("fingerprint: \(fingerprint(identity.publicKey))")
+            return true
+
+        case "--reset-identity":
+            DevClientIdentity.reset()
+            let identity = DevClientIdentity.loadOrCreate()
+            print("reset identity")
+            print("device_id: \(identity.deviceID)")
+            print("public_key: \(identity.publicKey.base64EncodedString())")
+            print("fingerprint: \(fingerprint(identity.publicKey))")
+            return true
+
+        case "--help":
+            printUsage()
+            return true
+
+        default:
+            return false
+        }
+    }
+
+    private static func printUsage() {
+        print("""
+        usage:
+          swift run remotepad-dev-client <port> [--attach-first] [--close-after-ready] [--browser-get <local-port> [path]]
+          swift run remotepad-dev-client --identity
+          swift run remotepad-dev-client --reset-identity
+        """)
+    }
+
+    private static func fingerprint(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private static func parseMode(arguments: [String]) -> DevClientMode {
@@ -470,6 +516,12 @@ struct DevClientIdentity {
         defaults.set(deviceID.uuidString, forKey: deviceIDKey)
         defaults.set(privateKey.rawRepresentation.base64EncodedString(), forKey: privateKeyKey)
         return DevClientIdentity(deviceID: deviceID, privateKey: privateKey)
+    }
+
+    static func reset() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "RemotePadDevClientDeviceID")
+        defaults.removeObject(forKey: "RemotePadDevClientPrivateKey")
     }
 
     func sign(_ data: Data) -> Data {

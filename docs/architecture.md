@@ -296,7 +296,7 @@ flowchart TD
 - 待受は `127.0.0.1` のみに固定する。
 - Bonjour / mDNS のサービス公開は無効にする。
 - LAN IP、`0.0.0.0`、Relay、外出先接続では起動しない。
-- 現在の署名チャレンジ検証は loopback-only の開発用 trust-on-first-use であり、LAN や Relay の信頼境界として扱わない。
+- 現在の署名チャレンジ検証は loopback-only の開発用 CLI 信頼登録であり、LAN や Relay の信頼境界として扱わない。
 
 この制約を外す条件は、Mac 側承認つきペアリング、信頼済みMac/iPad IDの永続化、失効フロー、監査ログの最小実装が揃うことです。
 
