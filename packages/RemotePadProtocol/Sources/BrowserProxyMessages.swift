@@ -48,3 +48,54 @@ public struct BrowserResponse: Codable, Equatable, Sendable {
         self.headers = headers
     }
 }
+
+public struct BrowserStreamOpen: Codable, Equatable, Sendable {
+    public var kind: String
+    public var streamID: UUID
+    public var target: BrowserTarget
+
+    public init(streamID: UUID, target: BrowserTarget) {
+        self.kind = "browser.stream.open"
+        self.streamID = streamID
+        self.target = target
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case streamID = "stream_id"
+        case target
+    }
+}
+
+public struct BrowserStreamData: Codable, Equatable, Sendable {
+    public var kind: String
+    public var streamID: UUID
+
+    public init(streamID: UUID) {
+        self.kind = "browser.stream.data"
+        self.streamID = streamID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case streamID = "stream_id"
+    }
+}
+
+public struct BrowserStreamClose: Codable, Equatable, Sendable {
+    public var kind: String
+    public var streamID: UUID
+    public var reason: String?
+
+    public init(streamID: UUID, reason: String? = nil) {
+        self.kind = "browser.stream.close"
+        self.streamID = streamID
+        self.reason = reason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case streamID = "stream_id"
+        case reason
+    }
+}

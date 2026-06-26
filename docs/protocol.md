@@ -398,7 +398,7 @@ Closed response:
 
 iPad から Mac 側 localhost へアクセスするためのプロキシです。
 
-初期実装では HTTP request / response のみ対応します。これは方式検証用のスパイクです。WebSocket、HMR、SSE、chunked response、大きな body を壊さない本命方式として、iPad 側ローカルリスナーと BrowserProxy stream を採用します。
+初期実装では HTTP request / response と TCP stream に対応します。HTTP request / response は方式検証用のスパイクです。WebSocket、HMR、SSE、chunked response、大きな body を壊さない本命方式として、iPad 側ローカルリスナーと BrowserProxy stream を採用します。
 
 HTTP request:
 
@@ -465,6 +465,8 @@ Browser stream data:
 ```
 
 `payload` に TCP stream bytes を入れます。
+
+現在の実装では、Mac Agent が `browser.stream.open` を受け取ると Mac 側 `target.host:target.port` へ TCP 接続し、`browser.stream.data` の payload を双方向に転送します。接続終了時は `browser.stream.close` を送ります。
 
 Browser stream close:
 

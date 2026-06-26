@@ -293,6 +293,7 @@ final class AgentConnection {
     private var offeredClientPublicKey: Data?
     private var sessionID: UUID?
     private var isAuthenticated = false
+    private var browserStreams: [UUID: BrowserTCPStream] = [:]
 
     init(
         nwConnection: NWConnection,
@@ -388,6 +389,15 @@ final class AgentConnection {
         case "browser.request":
             let message = try FrameCodec.decodeHeader(BrowserRequest.self, from: frame)
             handleBrowserRequest(message, channelID: frame.channelID, requestID: frame.requestID, payload: frame.payload)
+        case "browser.stream.open":
+            let message = try FrameCodec.decodeHeader(BrowserStreamOpen.self, from: frame)
+            handleBrowserStreamOpen(message, channelID: frame.channelID, requestID: frame.requestID)
+        case "browser.stream.data":
+            let message = try FrameCodec.decodeHeader(BrowserStreamData.self, from: frame)
+            handleBrowserStreamData(message, payload: frame.payload, requestID: frame.requestID)
+        case "browser.stream.close":
+            let message = try FrameCodec.decodeHeader(BrowserStreamClose.self, from: frame)
+            handleBrowserStreamClose(message)
         case "ping":
             sendPong(requestID: frame.requestID)
         default:
@@ -397,6 +407,70 @@ final class AgentConnection {
                 requestID: frame.requestID
             )
         }
+    }
+
+    private func handleBrowserStreamOpen(
+        _ message: BrowserStreamOpen,
+        channelID: UInt32,
+        requestID: UInt32
+    ) {
+        guard isAuthenticated else {
+            sendProtocolError(code: "auth_required", message: "Browser stream requires authentication.", requestID: requestID)
+            return
+        }
+        guard configuration.permissions.browserProxy else {
+            sendProtocolError(code: "permission_denied", message: "Browser proxy permission is not granted.", requestID: requestID)
+            return
+        }
+        guard browserStreams[message.streamID] == nil else {
+            sendProtocolError(code: "browser_stream_exists", message: "Browser stream already exists.", requestID: requestID)
+            return
+        }
+
+        let stream = BrowserTCPStream(
+            streamID: message.streamID,
+            target: message.target,
+            onData: { [weak self] streamID, data in
+                self?.sendBrowserStreamData(streamID: streamID, data: data, channelID: channelID)
+            },
+            onClose: { [weak self] streamID, reason in
+                self?.browserStreams[streamID] = nil
+                self?.sendBrowserStreamClose(streamID: streamID, reason: reason, channelID: channelID)
+            }
+        )
+        browserStreams[message.streamID] = stream
+        stream.start()
+    }
+
+    private func handleBrowserStreamData(
+        _ message: BrowserStreamData,
+        payload: Data,
+        requestID: UInt32
+    ) {
+        guard isAuthenticated else {
+            sendProtocolError(code: "auth_required", message: "Browser stream requires authentication.", requestID: requestID)
+            return
+        }
+        guard let stream = browserStreams[message.streamID] else {
+            sendProtocolError(code: "browser_stream_not_found", message: "Browser stream not found.", requestID: requestID)
+            return
+        }
+        stream.send(payload)
+    }
+
+    private func handleBrowserStreamClose(_ message: BrowserStreamClose) {
+        browserStreams[message.streamID]?.close(reason: message.reason ?? "client_closed")
+        browserStreams[message.streamID] = nil
+    }
+
+    private func sendBrowserStreamData(streamID: UUID, data: Data, channelID: UInt32) {
+        let message = BrowserStreamData(streamID: streamID)
+        sendHeader(message, type: .data, channelID: channelID, requestID: 0, payload: data)
+    }
+
+    private func sendBrowserStreamClose(streamID: UUID, reason: String, channelID: UInt32) {
+        let message = BrowserStreamClose(streamID: streamID, reason: reason)
+        sendHeader(message, type: .response, channelID: channelID, requestID: 0)
     }
 
     private func handleClientHello(_ message: ClientHello, requestID: UInt32) {
@@ -712,8 +786,105 @@ final class AgentConnection {
 
     private func close() {
         terminalStore.unsubscribeConnection(id)
+        let streams = Array(browserStreams.values)
+        browserStreams.removeAll()
+        for stream in streams {
+            stream.close(reason: "connection_closed")
+        }
         nwConnection.cancel()
         onClose(id)
+    }
+}
+
+@MainActor
+final class BrowserTCPStream {
+    let streamID: UUID
+
+    private let connection: NWConnection
+    private let onData: (UUID, Data) -> Void
+    private let onClose: (UUID, String) -> Void
+    private var isClosed = false
+
+    init(
+        streamID: UUID,
+        target: BrowserTarget,
+        onData: @escaping (UUID, Data) -> Void,
+        onClose: @escaping (UUID, String) -> Void
+    ) {
+        self.streamID = streamID
+        self.onData = onData
+        self.onClose = onClose
+        self.connection = NWConnection(
+            host: NWEndpoint.Host(target.host),
+            port: NWEndpoint.Port(rawValue: target.port)!,
+            using: .tcp
+        )
+    }
+
+    func start() {
+        connection.stateUpdateHandler = { [weak self] state in
+            Task { @MainActor in
+                self?.handleState(state)
+            }
+        }
+        receiveNext()
+        connection.start(queue: .main)
+    }
+
+    func send(_ data: Data) {
+        guard !data.isEmpty, !isClosed else { return }
+        connection.send(content: data, completion: .contentProcessed { [weak self] error in
+            if let error {
+                Task { @MainActor in
+                    self?.close(reason: "send_failed:\(error)")
+                }
+            }
+        })
+    }
+
+    func close(reason: String) {
+        guard !isClosed else { return }
+        isClosed = true
+        connection.cancel()
+        onClose(streamID, reason)
+    }
+
+    private func receiveNext() {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            Task { @MainActor in
+                self?.handleReceive(data: data, isComplete: isComplete, error: error)
+            }
+        }
+    }
+
+    private func handleReceive(data: Data?, isComplete: Bool, error: NWError?) {
+        if let error {
+            close(reason: "receive_failed:\(error)")
+            return
+        }
+
+        if let data, !data.isEmpty {
+            onData(streamID, data)
+        }
+
+        if isComplete {
+            close(reason: "eof")
+        } else if !isClosed {
+            receiveNext()
+        }
+    }
+
+    private func handleState(_ state: NWConnection.State) {
+        switch state {
+        case .failed(let error):
+            close(reason: "connect_failed:\(error)")
+        case .cancelled:
+            if !isClosed {
+                close(reason: "cancelled")
+            }
+        default:
+            break
+        }
     }
 }
 

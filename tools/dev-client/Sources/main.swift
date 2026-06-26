@@ -56,7 +56,7 @@ struct RemotePadDevClientCommand {
     private static func printUsage() {
         print("""
         usage:
-          swift run remotepad-dev-client <port> [--attach-first] [--close-after-ready] [--browser-get <local-port> [path]]
+          swift run remotepad-dev-client <port> [--attach-first] [--close-after-ready] [--browser-get <local-port> [path]] [--browser-stream-get <local-port> [path]]
           swift run remotepad-dev-client --identity
           swift run remotepad-dev-client --reset-identity
         """)
@@ -76,6 +76,15 @@ struct RemotePadDevClientCommand {
             return .browserGet(BrowserTarget(port: port, path: path))
         }
 
+        if let index = arguments.firstIndex(of: "--browser-stream-get"),
+           arguments.indices.contains(index + 1),
+           let port = UInt16(arguments[index + 1]) {
+            let path = arguments.indices.contains(index + 2) && !arguments[index + 2].hasPrefix("--")
+                ? arguments[index + 2]
+                : "/"
+            return .browserStreamGet(BrowserTarget(scheme: "tcp", port: port, path: path))
+        }
+
         return arguments.contains("--attach-first") ? .attachFirst : .create
     }
 }
@@ -84,6 +93,7 @@ enum DevClientMode {
     case create
     case attachFirst
     case browserGet(BrowserTarget)
+    case browserStreamGet(BrowserTarget)
 }
 
 final class DevClient: @unchecked Sendable {
@@ -101,9 +111,11 @@ final class DevClient: @unchecked Sendable {
     private var didSendTerminalCreate = false
     private var didSendTerminalList = false
     private var didSendTerminalClose = false
+    private var didSendBrowserStreamOpen = false
     private var didFinish = false
     private var terminalOutputBuffer = ""
     private var activeTerminalID: UUID?
+    private var activeBrowserStreamID: UUID?
 
     init(port: UInt16, mode: DevClientMode, closeAfterReady: Bool) {
         self.port = port
@@ -208,6 +220,8 @@ final class DevClient: @unchecked Sendable {
                                 self.sendTerminalList(on: connection)
                             case .browserGet(let target):
                                 self.sendBrowserRequest(target: target, on: connection)
+                            case .browserStreamGet(let target):
+                                self.sendBrowserStreamGet(target: target, on: connection)
                             }
                         } else {
                             self.finish(connection: connection, continuation: continuation)
@@ -261,6 +275,20 @@ final class DevClient: @unchecked Sendable {
                             print("  content-type: \(contentType)")
                         }
                         print(String(decoding: frame.payload, as: UTF8.self), terminator: "")
+                        self.finish(connection: connection, continuation: continuation)
+                        return
+                    } else if header.kind == "browser.stream.data" {
+                        let data = try FrameCodec.decodeHeader(BrowserStreamData.self, from: frame)
+                        print("received browser.stream.data")
+                        print("  stream_id: \(data.streamID)")
+                        print(String(decoding: frame.payload, as: UTF8.self), terminator: "")
+                    } else if header.kind == "browser.stream.close" {
+                        let close = try FrameCodec.decodeHeader(BrowserStreamClose.self, from: frame)
+                        print("received browser.stream.close")
+                        print("  stream_id: \(close.streamID)")
+                        if let reason = close.reason {
+                            print("  reason: \(reason)")
+                        }
                         self.finish(connection: connection, continuation: continuation)
                         return
                     } else if header.kind == "terminal.list.result" {
@@ -453,6 +481,8 @@ final class DevClient: @unchecked Sendable {
             terminalOutputBuffer.contains("__REMOTEPAD_ATTACHED__")
         case .browserGet:
             false
+        case .browserStreamGet:
+            false
         }
     }
 
@@ -476,6 +506,51 @@ final class DevClient: @unchecked Sendable {
             })
         } catch {
             print("browser request encode failed: \(error)")
+        }
+    }
+
+    private func sendBrowserStreamGet(target: BrowserTarget, on connection: NWConnection) {
+        guard !didSendBrowserStreamOpen else { return }
+        didSendBrowserStreamOpen = true
+
+        let streamID = UUID()
+        activeBrowserStreamID = streamID
+        let open = BrowserStreamOpen(streamID: streamID, target: target)
+        let requestText = """
+        GET \(target.path.isEmpty ? "/" : target.path) HTTP/1.1\r
+        Host: \(target.host):\(target.port)\r
+        Connection: close\r
+        Accept: */*\r
+        \r
+
+        """
+
+        do {
+            let openData = try FrameCodec.encodeHeader(
+                open,
+                type: .request,
+                channelID: 3,
+                requestID: 9
+            )
+            let streamData = try FrameCodec.encodeHeader(
+                BrowserStreamData(streamID: streamID),
+                type: .data,
+                channelID: 3,
+                requestID: 10,
+                payload: Data(requestText.utf8)
+            )
+            connection.send(content: openData, completion: .contentProcessed { error in
+                if let error {
+                    print("browser stream open send failed: \(error)")
+                }
+            })
+            connection.send(content: streamData, completion: .contentProcessed { error in
+                if let error {
+                    print("browser stream data send failed: \(error)")
+                }
+            })
+        } catch {
+            print("browser stream encode failed: \(error)")
         }
     }
 
