@@ -16,6 +16,7 @@ The initial implementation starts with the shared protocol layer used by the fut
 - HTTP BrowserProxy spike for Mac localhost fetches
 - TCP BrowserProxy stream for Mac localhost tunnels
 - Development local listener that forwards `127.0.0.1:<listen>` to Mac localhost over BrowserProxy stream
+- iPad SwiftUI app scaffold with WebView and local listener wiring
 - Development CLI client
 - Unit tests for frame, control, terminal, and browser proxy messages
 
@@ -40,6 +41,24 @@ swift run remotepad-agent --revoke-device <device-id>
 ```sh
 swift test
 ```
+
+## iPad App
+
+Generate or refresh the Xcode project:
+
+```sh
+xcodegen generate
+```
+
+Open `RemotePad.xcodeproj` and run the `RemotePad` iPad app target.
+
+The app shows its development device identity. Trust that identity on the Mac before connecting:
+
+```sh
+swift run remotepad-agent --trust-device <ipad-device-id> <ipad-public-key-base64>
+```
+
+For simulator development with the current loopback-only agent, use `127.0.0.1` as the agent host. Real iPad device testing requires the later LAN-safe pairing/agent exposure work.
 
 ## Local Handshake Check
 

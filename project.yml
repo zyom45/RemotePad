@@ -1,0 +1,25 @@
+name: RemotePad
+options:
+  minimumXcodeGenVersion: 2.42.0
+packages:
+  RemotePadProtocol:
+    path: .
+targets:
+  RemotePad:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: apps/ipad/Sources
+      - path: apps/ipad/Resources
+    dependencies:
+      - package: RemotePadProtocol
+        product: RemotePadProtocol
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.remotepad.ipad
+        PRODUCT_NAME: RemotePad
+        INFOPLIST_FILE: apps/ipad/Resources/Info.plist
+        TARGETED_DEVICE_FAMILY: 2
+        SWIFT_VERSION: 6.0
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: false
