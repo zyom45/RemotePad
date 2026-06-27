@@ -15,6 +15,7 @@ The initial implementation starts with the shared protocol layer used by the fut
 - Agent-managed PTY terminal create / attach / close
 - HTTP BrowserProxy spike for Mac localhost fetches
 - TCP BrowserProxy stream for Mac localhost tunnels
+- Development local listener that forwards `127.0.0.1:<listen>` to Mac localhost over BrowserProxy stream
 - Development CLI client
 - Unit tests for frame, control, terminal, and browser proxy messages
 
@@ -95,7 +96,14 @@ swift run remotepad-dev-client <agent-port> --browser-stream-get 18080 /README.m
 
 The client should print `received browser.stream.data` with raw HTTP response bytes, followed by `received browser.stream.close`.
 
-The remaining product path is an iPad-side local listener that forwards browser traffic over the RemotePad stream to Mac `localhost`, so WebView origin behavior, WebSocket, HMR, SSE, and streaming responses can work correctly.
+To verify the local listener path:
+
+```sh
+swift run remotepad-dev-client --local-proxy <agent-port> 19090 18080
+curl -i http://127.0.0.1:19090/README.md
+```
+
+The remaining product path is moving this local listener into the iPad app and validating WebView origin behavior, WebSocket, HMR, SSE, and streaming responses.
 
 ## Docs
 

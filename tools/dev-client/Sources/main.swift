@@ -6,6 +6,11 @@ import RemotePadProtocol
 @main
 struct RemotePadDevClientCommand {
     static func main() async throws {
+        if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--local-proxy" {
+            try await runLocalProxy(arguments: CommandLine.arguments)
+            return
+        }
+
         if handleUtilityCommand(arguments: CommandLine.arguments) {
             return
         }
@@ -57,9 +62,34 @@ struct RemotePadDevClientCommand {
         print("""
         usage:
           swift run remotepad-dev-client <port> [--attach-first] [--close-after-ready] [--browser-get <local-port> [path]] [--browser-stream-get <local-port> [path]]
+          swift run remotepad-dev-client --local-proxy <agent-port> <listen-port> <target-port>
           swift run remotepad-dev-client --identity
           swift run remotepad-dev-client --reset-identity
         """)
+    }
+
+    private static func runLocalProxy(arguments: [String]) async throws {
+        guard arguments.count == 5,
+              let agentPort = UInt16(arguments[2]),
+              let listenPort = UInt16(arguments[3]),
+              let targetPort = UInt16(arguments[4]) else {
+            print("usage: swift run remotepad-dev-client --local-proxy <agent-port> <listen-port> <target-port>")
+            return
+        }
+
+        let proxy = try LocalBrowserProxy(
+            agentPort: agentPort,
+            listenPort: listenPort,
+            target: BrowserTarget(scheme: "tcp", host: "127.0.0.1", port: targetPort, path: "")
+        )
+        proxy.start()
+        print("local proxy ready")
+        print("  listen: http://127.0.0.1:\(listenPort)")
+        print("  target: Mac 127.0.0.1:\(targetPort)")
+        print("  agent: 127.0.0.1:\(agentPort)")
+        while !Task.isCancelled {
+            try await Task.sleep(for: .seconds(60))
+        }
     }
 
     private static func fingerprint(_ data: Data) -> String {
@@ -562,6 +592,336 @@ final class DevClient: @unchecked Sendable {
         didFinish = true
         connection.cancel()
         continuation.resume()
+    }
+}
+
+final class LocalBrowserProxy: @unchecked Sendable {
+    private let agentPort: UInt16
+    private let listenPort: UInt16
+    private let target: BrowserTarget
+    private let identity = DevClientIdentity.loadOrCreate()
+    private let queue = DispatchQueue(label: "RemotePadLocalBrowserProxy")
+    private let listener: NWListener
+    private var connections: [UUID: LocalBrowserProxyConnection] = [:]
+
+    init(agentPort: UInt16, listenPort: UInt16, target: BrowserTarget) throws {
+        self.agentPort = agentPort
+        self.listenPort = listenPort
+        self.target = target
+
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(
+            host: .ipv4(.loopback),
+            port: NWEndpoint.Port(rawValue: listenPort)!
+        )
+        self.listener = try NWListener(using: parameters)
+    }
+
+    func start() {
+        listener.newConnectionHandler = { [weak self] localConnection in
+            guard let self else {
+                localConnection.cancel()
+                return
+            }
+            let connection = LocalBrowserProxyConnection(
+                localConnection: localConnection,
+                agentPort: self.agentPort,
+                target: self.target,
+                identity: self.identity,
+                queue: self.queue,
+                onClose: { [weak self] id in
+                    self?.connections[id] = nil
+                }
+            )
+            self.connections[connection.id] = connection
+            connection.start()
+        }
+        listener.stateUpdateHandler = { state in
+            if case .failed(let error) = state {
+                print("local proxy listener failed: \(error)")
+            }
+        }
+        listener.start(queue: queue)
+    }
+}
+
+final class LocalBrowserProxyConnection: @unchecked Sendable {
+    let id = UUID()
+
+    private let localConnection: NWConnection
+    private let agentConnection: NWConnection
+    private let target: BrowserTarget
+    private let identity: DevClientIdentity
+    private let queue: DispatchQueue
+    private let onClose: (UUID) -> Void
+    private let decoder = FrameStreamDecoder()
+    private let streamID = UUID()
+
+    private var clientNonce: Data?
+    private var serverDeviceID: UUID?
+    private var serverNonce: Data?
+    private var isAuthenticated = false
+    private var didOpenStream = false
+    private var isClosed = false
+    private var pendingLocalData: [Data] = []
+
+    init(
+        localConnection: NWConnection,
+        agentPort: UInt16,
+        target: BrowserTarget,
+        identity: DevClientIdentity,
+        queue: DispatchQueue,
+        onClose: @escaping (UUID) -> Void
+    ) {
+        self.localConnection = localConnection
+        self.agentConnection = NWConnection(
+            host: "127.0.0.1",
+            port: NWEndpoint.Port(rawValue: agentPort)!,
+            using: .tcp
+        )
+        self.target = target
+        self.identity = identity
+        self.queue = queue
+        self.onClose = onClose
+    }
+
+    func start() {
+        localConnection.stateUpdateHandler = { [weak self] state in
+            self?.handleLocalState(state)
+        }
+        agentConnection.stateUpdateHandler = { [weak self] state in
+            self?.handleAgentState(state)
+        }
+
+        receiveLocal()
+        localConnection.start(queue: queue)
+        agentConnection.start(queue: queue)
+    }
+
+    private func handleLocalState(_ state: NWConnection.State) {
+        switch state {
+        case .failed, .cancelled:
+            close()
+        default:
+            break
+        }
+    }
+
+    private func handleAgentState(_ state: NWConnection.State) {
+        switch state {
+        case .ready:
+            sendClientHello()
+            receiveAgent()
+        case .failed(let error):
+            print("local proxy agent connection failed: \(error)")
+            close()
+        case .cancelled:
+            close()
+        default:
+            break
+        }
+    }
+
+    private func sendClientHello() {
+        let nonce = Data.randomBytes(count: 32)
+        clientNonce = nonce
+        let hello = ClientHello(
+            deviceID: identity.deviceID,
+            nonce: nonce,
+            publicKey: identity.publicKey
+        )
+        sendToAgent(hello, type: .request, channelID: 1, requestID: 1)
+    }
+
+    private func receiveAgent() {
+        agentConnection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            if let error {
+                print("local proxy agent receive failed: \(error)")
+                self.close()
+                return
+            }
+
+            if let data, !data.isEmpty {
+                do {
+                    let frames = try self.decoder.append(data)
+                    for frame in frames {
+                        try self.handleAgentFrame(frame)
+                    }
+                } catch {
+                    print("local proxy protocol error: \(error)")
+                    self.close()
+                    return
+                }
+            }
+
+            if isComplete {
+                self.close()
+            } else if !self.isClosed {
+                self.receiveAgent()
+            }
+        }
+    }
+
+    private func handleAgentFrame(_ frame: Frame) throws {
+        let header = try FrameCodec.decodeHeader(MessageHeader.self, from: frame)
+        switch header.kind {
+        case "server.hello":
+            let hello = try FrameCodec.decodeHeader(ServerHello.self, from: frame)
+            serverDeviceID = hello.deviceID
+            serverNonce = hello.nonce
+            sendAuthProof()
+        case "auth.result":
+            let result = try FrameCodec.decodeHeader(AuthResult.self, from: frame)
+            guard result.accepted else {
+                print("local proxy auth rejected: \(result.reason ?? "unknown")")
+                close()
+                return
+            }
+            isAuthenticated = true
+            openBrowserStream()
+        case "browser.stream.data":
+            _ = try FrameCodec.decodeHeader(BrowserStreamData.self, from: frame)
+            sendToLocal(frame.payload)
+        case "browser.stream.close":
+            close()
+        case "error":
+            let error = try FrameCodec.decodeHeader(ProtocolErrorMessage.self, from: frame)
+            print("local proxy remote error: \(error.code) \(error.message)")
+            close()
+        default:
+            break
+        }
+    }
+
+    private func sendAuthProof() {
+        guard let clientNonce, let serverDeviceID, let serverNonce else {
+            close()
+            return
+        }
+
+        let transcript = AuthTranscript.make(
+            clientDeviceID: identity.deviceID,
+            clientNonce: clientNonce,
+            serverDeviceID: serverDeviceID,
+            serverNonce: serverNonce
+        )
+        sendToAgent(
+            AuthProof(signature: identity.sign(transcript)),
+            type: .request,
+            channelID: 1,
+            requestID: 2
+        )
+    }
+
+    private func openBrowserStream() {
+        guard isAuthenticated, !didOpenStream else { return }
+        didOpenStream = true
+        sendToAgent(
+            BrowserStreamOpen(streamID: streamID, target: target),
+            type: .request,
+            channelID: 3,
+            requestID: 3
+        )
+        flushPendingLocalData()
+    }
+
+    private func receiveLocal() {
+        localConnection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            if let error {
+                print("local proxy browser receive failed: \(error)")
+                self.close()
+                return
+            }
+
+            if let data, !data.isEmpty {
+                self.handleLocalData(data)
+            }
+
+            if isComplete {
+                self.sendToAgent(
+                    BrowserStreamClose(streamID: self.streamID, reason: "local_eof"),
+                    type: .request,
+                    channelID: 3,
+                    requestID: 0
+                )
+            } else if !self.isClosed {
+                self.receiveLocal()
+            }
+        }
+    }
+
+    private func handleLocalData(_ data: Data) {
+        guard didOpenStream else {
+            pendingLocalData.append(data)
+            return
+        }
+        sendBrowserData(data)
+    }
+
+    private func flushPendingLocalData() {
+        let pending = pendingLocalData
+        pendingLocalData.removeAll()
+        for data in pending {
+            sendBrowserData(data)
+        }
+    }
+
+    private func sendBrowserData(_ data: Data) {
+        sendToAgent(
+            BrowserStreamData(streamID: streamID),
+            type: .data,
+            channelID: 3,
+            requestID: 4,
+            payload: data
+        )
+    }
+
+    private func sendToLocal(_ data: Data) {
+        guard !data.isEmpty, !isClosed else { return }
+        localConnection.send(content: data, completion: .contentProcessed { [weak self] error in
+            if let error {
+                print("local proxy browser send failed: \(error)")
+                self?.close()
+            }
+        })
+    }
+
+    private func sendToAgent<Header: Encodable>(
+        _ header: Header,
+        type: FrameType,
+        channelID: UInt32,
+        requestID: UInt32,
+        payload: Data = Data()
+    ) {
+        guard !isClosed else { return }
+        do {
+            let data = try FrameCodec.encodeHeader(
+                header,
+                type: type,
+                channelID: channelID,
+                requestID: requestID,
+                payload: payload
+            )
+            agentConnection.send(content: data, completion: .contentProcessed { [weak self] error in
+                if let error {
+                    print("local proxy agent send failed: \(error)")
+                    self?.close()
+                }
+            })
+        } catch {
+            print("local proxy encode failed: \(error)")
+            close()
+        }
+    }
+
+    private func close() {
+        guard !isClosed else { return }
+        isClosed = true
+        localConnection.cancel()
+        agentConnection.cancel()
+        onClose(id)
     }
 }
 

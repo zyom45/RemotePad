@@ -468,6 +468,8 @@ Browser stream data:
 
 現在の実装では、Mac Agent が `browser.stream.open` を受け取ると Mac 側 `target.host:target.port` へ TCP 接続し、`browser.stream.data` の payload を双方向に転送します。接続終了時は `browser.stream.close` を送ります。
 
+開発用 dev-client には iPad 側 local listener の前段として `--local-proxy <agent-port> <listen-port> <target-port>` があります。これは `127.0.0.1:<listen-port>` で受けた TCP 接続を RemotePad セッション上の BrowserProxy stream に変換し、Mac 側 `127.0.0.1:<target-port>` へ転送します。
+
 Browser stream close:
 
 ```json
