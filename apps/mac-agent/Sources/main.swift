@@ -38,6 +38,7 @@ struct RemotePadAgentCommand {
         guard arguments.count >= 2 else { return false }
 
         let store = TrustedDeviceStore()
+        let pendingStore = PendingPairingRequestStore()
         switch arguments[1] {
         case "--trust-device":
             guard arguments.count == 4,
@@ -61,6 +62,46 @@ struct RemotePadAgentCommand {
                 for device in devices {
                     print("\(device.deviceID.uuidString) \(device.publicKey.base64EncodedString()) \(fingerprint(device.publicKey))")
                 }
+            }
+            return true
+
+        case "--list-pairing-requests":
+            let requests = pendingStore.list()
+            if requests.isEmpty {
+                print("no pending pairing requests")
+            } else {
+                for request in requests {
+                    print("\(request.deviceID.uuidString) \(request.deviceName) \(request.deviceType.rawValue) \(request.publicKey.base64EncodedString()) \(fingerprint(request.publicKey))")
+                }
+            }
+            return true
+
+        case "--approve-pairing":
+            guard arguments.count == 3, let deviceID = UUID(uuidString: arguments[2]) else {
+                print("usage: swift run remotepad-agent --approve-pairing <device-id>")
+                return true
+            }
+            guard let identity = pendingStore.identity(for: deviceID) else {
+                print("no pending pairing request: \(deviceID)")
+                return true
+            }
+
+            store.trust(publicKey: identity.publicKey, for: identity.deviceID)
+            pendingStore.remove(deviceID: identity.deviceID)
+            print("approved pairing: \(identity.deviceID)")
+            print("device: \(identity.deviceName)")
+            print("fingerprint: \(fingerprint(identity.publicKey))")
+            return true
+
+        case "--reject-pairing":
+            guard arguments.count == 3, let deviceID = UUID(uuidString: arguments[2]) else {
+                print("usage: swift run remotepad-agent --reject-pairing <device-id>")
+                return true
+            }
+            if pendingStore.remove(deviceID: deviceID) {
+                print("rejected pairing: \(deviceID)")
+            } else {
+                print("no pending pairing request: \(deviceID)")
             }
             return true
 
@@ -97,6 +138,9 @@ struct RemotePadAgentCommand {
           swift run remotepad-agent
           swift run remotepad-agent --trust-device <device-id> <public-key-base64>
           swift run remotepad-agent --list-trusted
+          swift run remotepad-agent --list-pairing-requests
+          swift run remotepad-agent --approve-pairing <device-id>
+          swift run remotepad-agent --reject-pairing <device-id>
           swift run remotepad-agent --revoke-device <device-id>
           swift run remotepad-agent --clear-trusted-devices
         """)
@@ -188,6 +232,7 @@ final class RemotePadAgent {
     private var connections: [UUID: AgentConnection] = [:]
     private let terminalStore = TerminalStore()
     private let trustedDeviceStore = TrustedDeviceStore()
+    private let pendingPairingStore = PendingPairingRequestStore()
     private(set) var port: UInt16 = 0
 
     init(configuration: AgentConfiguration) {
@@ -239,6 +284,7 @@ final class RemotePadAgent {
             configuration: configuration,
             terminalStore: terminalStore,
             trustedDeviceStore: trustedDeviceStore,
+            pendingPairingStore: pendingPairingStore,
             onClose: { [weak self] id in
                 self?.connections[id] = nil
             }
@@ -285,8 +331,11 @@ final class AgentConnection {
     private let configuration: AgentConfiguration
     private let terminalStore: TerminalStore
     private let trustedDeviceStore: TrustedDeviceStore
+    private let pendingPairingStore: PendingPairingRequestStore
     private let decoder = FrameStreamDecoder()
     private let onClose: (UUID) -> Void
+    private var pendingPairingIdentity: DeviceIdentity?
+    private var pendingPairingChallenge: Data?
     private var clientDeviceID: UUID?
     private var clientNonce: Data?
     private var serverNonce: Data?
@@ -300,12 +349,14 @@ final class AgentConnection {
         configuration: AgentConfiguration,
         terminalStore: TerminalStore,
         trustedDeviceStore: TrustedDeviceStore,
+        pendingPairingStore: PendingPairingRequestStore,
         onClose: @escaping (UUID) -> Void
     ) {
         self.nwConnection = nwConnection
         self.configuration = configuration
         self.terminalStore = terminalStore
         self.trustedDeviceStore = trustedDeviceStore
+        self.pendingPairingStore = pendingPairingStore
         self.onClose = onClose
     }
 
@@ -363,6 +414,12 @@ final class AgentConnection {
     private func handleFrame(_ frame: Frame) throws {
         let header = try FrameCodec.decodeHeader(MessageHeader.self, from: frame)
         switch header.kind {
+        case "pairing.start":
+            let message = try FrameCodec.decodeHeader(PairingStart.self, from: frame)
+            handlePairingStart(message, requestID: frame.requestID)
+        case "pairing.response":
+            let message = try FrameCodec.decodeHeader(PairingResponse.self, from: frame)
+            handlePairingResponse(message, requestID: frame.requestID)
         case "client.hello":
             let message = try FrameCodec.decodeHeader(ClientHello.self, from: frame)
             handleClientHello(message, requestID: frame.requestID)
@@ -407,6 +464,103 @@ final class AgentConnection {
                 requestID: frame.requestID
             )
         }
+    }
+
+    private func handlePairingStart(_ message: PairingStart, requestID: UInt32) {
+        guard message.identity.deviceType == .ipad else {
+            sendPairingResult(
+                accepted: false,
+                status: "rejected",
+                deviceID: message.identity.deviceID,
+                reason: "unsupported_device_type",
+                requestID: requestID
+            )
+            return
+        }
+        guard verifyPublicKey(message.identity.publicKey) else {
+            sendPairingResult(
+                accepted: false,
+                status: "rejected",
+                deviceID: message.identity.deviceID,
+                reason: "invalid_public_key",
+                requestID: requestID
+            )
+            return
+        }
+
+        let challenge = Data.randomBytes(count: 32)
+        pendingPairingIdentity = message.identity
+        pendingPairingChallenge = challenge
+        let response = PairingChallenge(
+            challenge: challenge,
+            macIdentity: DeviceIdentity(
+                deviceID: configuration.deviceID,
+                deviceName: configuration.deviceName,
+                deviceType: .mac,
+                publicKey: Data(),
+                createdAt: Date()
+            )
+        )
+        sendHeader(response, type: .response, channelID: 1, requestID: requestID)
+    }
+
+    private func handlePairingResponse(_ message: PairingResponse, requestID: UInt32) {
+        guard let identity = pendingPairingIdentity, let challenge = pendingPairingChallenge else {
+            sendPairingResult(
+                accepted: false,
+                status: "rejected",
+                deviceID: UUID(),
+                reason: "pairing_start_required",
+                requestID: requestID
+            )
+            return
+        }
+
+        let transcript = PairingTranscript.make(
+            challenge: challenge,
+            ipadIdentity: identity,
+            macDeviceID: configuration.deviceID
+        )
+        guard verify(signature: message.signature, for: transcript, publicKey: identity.publicKey) else {
+            sendPairingResult(
+                accepted: false,
+                status: "rejected",
+                deviceID: identity.deviceID,
+                reason: "invalid_signature",
+                requestID: requestID
+            )
+            return
+        }
+
+        pendingPairingStore.save(identity)
+        sendPairingResult(
+            accepted: true,
+            status: "pending_approval",
+            deviceID: identity.deviceID,
+            requestID: requestID
+        )
+        print("pending pairing request \(identity.deviceID) \(identity.deviceName)")
+    }
+
+    private func sendPairingResult(
+        accepted: Bool,
+        status: String,
+        deviceID: UUID,
+        reason: String? = nil,
+        requestID: UInt32
+    ) {
+        let result = PairingResult(
+            accepted: accepted,
+            status: status,
+            deviceID: deviceID,
+            permissions: accepted ? configuration.permissions : nil,
+            reason: reason
+        )
+        sendHeader(result, type: .response, flags: accepted ? [] : [.error], channelID: 1, requestID: requestID)
+    }
+
+    private func verifyPublicKey(_ publicKey: Data) -> Bool {
+        (try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey)) != nil
     }
 
     private func handleBrowserStreamOpen(
@@ -943,6 +1097,57 @@ final class TrustedDeviceStore {
 
     private func encode(_ keys: [String: Data]) -> [String: String] {
         keys.mapValues { $0.base64EncodedString() }
+    }
+}
+
+final class PendingPairingRequestStore {
+    private let defaults = UserDefaults.standard
+    private let key = "RemotePadPendingPairingRequests"
+
+    func identity(for deviceID: UUID) -> DeviceIdentity? {
+        allRequests()[deviceID.uuidString]
+    }
+
+    func list() -> [DeviceIdentity] {
+        allRequests()
+            .values
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    func save(_ identity: DeviceIdentity) {
+        var requests = allRequests()
+        requests[identity.deviceID.uuidString] = identity
+        defaults.set(encode(requests), forKey: key)
+    }
+
+    @discardableResult
+    func remove(deviceID: UUID) -> Bool {
+        var requests = allRequests()
+        guard requests.removeValue(forKey: deviceID.uuidString) != nil else {
+            return false
+        }
+        defaults.set(encode(requests), forKey: key)
+        return true
+    }
+
+    private func allRequests() -> [String: DeviceIdentity] {
+        guard let encoded = defaults.dictionary(forKey: key) as? [String: Data] else {
+            return [:]
+        }
+
+        return encoded.reduce(into: [String: DeviceIdentity]()) { result, entry in
+            if let identity = try? JSONDecoder.remotePad.decode(DeviceIdentity.self, from: entry.value) {
+                result[entry.key] = identity
+            }
+        }
+    }
+
+    private func encode(_ requests: [String: DeviceIdentity]) -> [String: Data] {
+        requests.reduce(into: [String: Data]()) { result, entry in
+            if let data = try? JSONEncoder.remotePad.encode(entry.value) {
+                result[entry.key] = data
+            }
+        }
     }
 }
 
