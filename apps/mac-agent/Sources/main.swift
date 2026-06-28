@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Darwin
 import CryptoKit
@@ -124,6 +125,15 @@ struct RemotePadAgentCommand {
             print("cleared trusted devices")
             return true
 
+        case "--open-pairing-approver":
+            do {
+                try PairingApproverLauncher().open()
+                print("opened pairing approver")
+            } catch {
+                print("failed to open pairing approver: \(error)")
+            }
+            return true
+
         case "--help":
             printUsage()
             return true
@@ -144,6 +154,7 @@ struct RemotePadAgentCommand {
           swift run remotepad-agent --reject-pairing <device-id>
           swift run remotepad-agent --revoke-device <device-id>
           swift run remotepad-agent --clear-trusted-devices
+          swift run remotepad-agent --open-pairing-approver
         """)
     }
 
@@ -184,6 +195,7 @@ struct AgentConfiguration {
     var networkExposure: NetworkExposure
     var publishesBonjour: Bool
     var allowsDevelopmentTrustOnFirstUse: Bool
+    var opensPairingApproverOnRequest: Bool
 
     static var `default`: AgentConfiguration {
         AgentConfiguration(
@@ -194,7 +206,8 @@ struct AgentConfiguration {
             permissions: .mvpDefault,
             networkExposure: .loopbackOnly,
             publishesBonjour: false,
-            allowsDevelopmentTrustOnFirstUse: false
+            allowsDevelopmentTrustOnFirstUse: false,
+            opensPairingApproverOnRequest: true
         )
     }
 
@@ -321,6 +334,80 @@ final class RemotePadAgent {
         default:
             break
         }
+    }
+}
+
+struct PairingApproverLauncher {
+    enum LaunchError: Error, CustomStringConvertible {
+        case executableNotFound(URL)
+        case launchFailed(String)
+
+        var description: String {
+            switch self {
+            case .executableNotFound(let url):
+                return "approver executable not found at \(url.path)"
+            case .launchFailed(let message):
+                return message
+            }
+        }
+    }
+
+    private let executableName = "remotepad-pairing-approver"
+
+    func open() throws {
+        if isAlreadyRunning() {
+            activateRunningApprover()
+            return
+        }
+
+        let url = try executableURL()
+        let process = Process()
+        process.executableURL = url
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            throw LaunchError.launchFailed(error.localizedDescription)
+        }
+    }
+
+    private func executableURL() throws -> URL {
+        let agentURL = currentExecutableURL()
+        let url = agentURL.deletingLastPathComponent().appendingPathComponent(executableName)
+        guard FileManager.default.isExecutableFile(atPath: url.path) else {
+            throw LaunchError.executableNotFound(url)
+        }
+        return url
+    }
+
+    private func currentExecutableURL() -> URL {
+        let path = CommandLine.arguments[0]
+        if path.hasPrefix("/") {
+            return URL(fileURLWithPath: path)
+        }
+
+        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(path)
+            .standardizedFileURL
+    }
+
+    private func isAlreadyRunning() -> Bool {
+        NSWorkspace.shared.runningApplications.contains { application in
+            application.localizedName == executableName
+            || application.executableURL?.lastPathComponent == executableName
+        }
+    }
+
+    private func activateRunningApprover() {
+        NSWorkspace.shared.runningApplications
+            .first { application in
+                application.localizedName == executableName
+                || application.executableURL?.lastPathComponent == executableName
+            }?
+            .activate(options: [.activateAllWindows])
     }
 }
 
@@ -537,6 +624,7 @@ final class AgentConnection {
         }
 
         pendingPairingStore.save(identity)
+        openPairingApproverIfNeeded()
         sendPairingResult(
             accepted: true,
             status: "pending_approval",
@@ -544,6 +632,15 @@ final class AgentConnection {
             requestID: requestID
         )
         print("pending pairing request \(identity.deviceID) \(identity.deviceName)")
+    }
+
+    private func openPairingApproverIfNeeded() {
+        guard configuration.opensPairingApproverOnRequest else { return }
+        do {
+            try PairingApproverLauncher().open()
+        } catch {
+            print("failed to open pairing approver: \(error)")
+        }
     }
 
     private func handlePairingStatus(_ message: PairingStatusRequest, requestID: UInt32) {
