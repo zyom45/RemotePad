@@ -59,6 +59,11 @@ let package = Package(
             name: "RemotePadProtocolTests",
             dependencies: ["RemotePadProtocol"],
             path: "packages/RemotePadProtocol/Tests"
+        ),
+        .testTarget(
+            name: "RemotePadAgentSupportTests",
+            dependencies: ["RemotePadAgentSupport"],
+            path: "packages/RemotePadAgentSupport/Tests"
         )
     ]
 )
