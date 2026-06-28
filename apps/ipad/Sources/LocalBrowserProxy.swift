@@ -15,6 +15,16 @@ struct AppIdentity: Sendable {
         SHA256.hash(data: publicKey).map { String(format: "%02x", $0) }.joined()
     }
 
+    func deviceIdentity(deviceName: String) -> DeviceIdentity {
+        DeviceIdentity(
+            deviceID: deviceID,
+            deviceName: deviceName,
+            deviceType: .ipad,
+            publicKey: publicKey,
+            createdAt: Date()
+        )
+    }
+
     static func loadOrCreate() -> AppIdentity {
         let defaults = UserDefaults.standard
         let deviceIDKey = "RemotePadAppDeviceID"

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		35B6EC95C2E27A30E8CA7ED1 /* BrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE6EC1EE7B900E75374A84E3 /* BrowserView.swift */; };
 		4AFAE66AA66C1CA5AFB43341 /* LocalBrowserProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ADE1E7AF9CFC03A03916B69 /* LocalBrowserProxy.swift */; };
+		7963D1333151CCB7F851271E /* PairingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C53A5A5369DD3B9B7703CB8 /* PairingClient.swift */; };
 		7ACE5C5C55A45FBF6646CC40 /* RemotePadModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5470222DA1F6861F4B2299B /* RemotePadModel.swift */; };
 		A15419809F82D1CE6D70FA34 /* RemotePadProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = 8F02BF582A272021F1B89138 /* RemotePadProtocol */; };
 		A28D9B23EE66AF9A94C2AD9A /* RemotePadApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B68217B1B59A38B58F58DF /* RemotePadApp.swift */; };
@@ -19,6 +20,7 @@
 		1ADE1E7AF9CFC03A03916B69 /* LocalBrowserProxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalBrowserProxy.swift; sourceTree = "<group>"; };
 		1B2B835227557C7C1A20C581 /* RemotePad */ = {isa = PBXFileReference; lastKnownFileType = folder; name = RemotePad; path = .; sourceTree = SOURCE_ROOT; };
 		20ABF56464C2C174E6612AAF /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		3C53A5A5369DD3B9B7703CB8 /* PairingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingClient.swift; sourceTree = "<group>"; };
 		57D6ECF5DDAC090FF3F395ED /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A5470222DA1F6861F4B2299B /* RemotePadModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePadModel.swift; sourceTree = "<group>"; };
 		BF90DC17FA7BF611BF4817AE /* RemotePad.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RemotePad.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -79,6 +81,7 @@
 				FE6EC1EE7B900E75374A84E3 /* BrowserView.swift */,
 				20ABF56464C2C174E6612AAF /* ContentView.swift */,
 				1ADE1E7AF9CFC03A03916B69 /* LocalBrowserProxy.swift */,
+				3C53A5A5369DD3B9B7703CB8 /* PairingClient.swift */,
 				F3B68217B1B59A38B58F58DF /* RemotePadApp.swift */,
 				A5470222DA1F6861F4B2299B /* RemotePadModel.swift */,
 			);
@@ -147,6 +150,7 @@
 				35B6EC95C2E27A30E8CA7ED1 /* BrowserView.swift in Sources */,
 				CE3726C92FE68FD1AB84C068 /* ContentView.swift in Sources */,
 				4AFAE66AA66C1CA5AFB43341 /* LocalBrowserProxy.swift in Sources */,
+				7963D1333151CCB7F851271E /* PairingClient.swift in Sources */,
 				A28D9B23EE66AF9A94C2AD9A /* RemotePadApp.swift in Sources */,
 				7ACE5C5C55A45FBF6646CC40 /* RemotePadModel.swift in Sources */,
 			);

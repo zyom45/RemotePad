@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 @MainActor
 final class RemotePadModel: ObservableObject {
@@ -10,6 +11,7 @@ final class RemotePadModel: ObservableObject {
     @Published var targetPort = "18080"
     @Published var browserPath = "/"
     @Published var status = "Stopped"
+    @Published var pairingStatus = "Not paired"
     @Published var isProxyRunning = false
 
     private var proxy: LocalBrowserProxy?
@@ -54,5 +56,28 @@ final class RemotePadModel: ObservableObject {
         proxy = nil
         isProxyRunning = false
         status = "Stopped"
+    }
+
+    func requestPairing() {
+        guard let agentPort = UInt16(agentPort) else {
+            pairingStatus = "Invalid agent port"
+            return
+        }
+
+        pairingStatus = "Requesting..."
+        let client = PairingClient(
+            agentHost: agentHost,
+            agentPort: agentPort,
+            identity: identity,
+            deviceName: UIDevice.current.name
+        )
+        Task {
+            do {
+                let result = try await client.run()
+                pairingStatus = "\(result.status): \(result.deviceID.uuidString)"
+            } catch {
+                pairingStatus = "Failed: \(error)"
+            }
+        }
     }
 }

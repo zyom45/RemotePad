@@ -23,6 +23,9 @@ struct ContentView: View {
                 }
 
                 Section {
+                    Button("Request Pairing") {
+                        model.requestPairing()
+                    }
                     Button(model.isProxyRunning ? "Stop Proxy" : "Start Proxy") {
                         model.isProxyRunning ? model.stopProxy() : model.startProxy()
                     }
@@ -33,6 +36,7 @@ struct ContentView: View {
                 }
 
                 Section("Status") {
+                    LabeledContent("Pairing", value: model.pairingStatus)
                     Text(model.status)
                     if let url = model.browserURL {
                         Text(url.absoluteString)
