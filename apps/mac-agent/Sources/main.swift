@@ -207,7 +207,10 @@ struct AgentConfiguration {
             networkExposure: .loopbackOnly,
             publishesBonjour: false,
             allowsDevelopmentTrustOnFirstUse: false,
-            opensPairingApproverOnRequest: true
+            opensPairingApproverOnRequest: environmentFlag(
+                "REMOTEPAD_OPEN_PAIRING_APPROVER",
+                defaultValue: true
+            )
         )
     }
 
@@ -222,6 +225,21 @@ struct AgentConfiguration {
         let uuid = UUID()
         defaults.set(uuid.uuidString, forKey: key)
         return uuid
+    }
+
+    private static func environmentFlag(_ key: String, defaultValue: Bool) -> Bool {
+        guard let value = ProcessInfo.processInfo.environment[key]?.lowercased() else {
+            return defaultValue
+        }
+
+        switch value {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return defaultValue
+        }
     }
 }
 
