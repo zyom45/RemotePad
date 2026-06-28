@@ -22,6 +22,10 @@ let package = Package(
             targets: ["RemotePadAgent"]
         ),
         .executable(
+            name: "remotepad-pairing-approver",
+            targets: ["RemotePadPairingApprover"]
+        ),
+        .executable(
             name: "remotepad-dev-client",
             targets: ["RemotePadDevClient"]
         )
@@ -40,6 +44,11 @@ let package = Package(
             name: "RemotePadAgent",
             dependencies: ["RemotePadProtocol", "RemotePadAgentSupport"],
             path: "apps/mac-agent/Sources"
+        ),
+        .executableTarget(
+            name: "RemotePadPairingApprover",
+            dependencies: ["RemotePadProtocol", "RemotePadAgentSupport"],
+            path: "apps/mac-pairing-approver/Sources"
         ),
         .executableTarget(
             name: "RemotePadDevClient",
