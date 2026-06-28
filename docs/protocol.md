@@ -105,6 +105,8 @@ sequenceDiagram
 
 ペアリングは Mac 側の明示承認を必須にします。承認後、Mac は iPad 端末ごとの権限を保存します。
 
+現在の開発実装では、iPad App が `pairing.start` を送り、Mac Agent が `pairing.challenge` を返します。iPad App は `PairingTranscript` に署名した `pairing.response` を送り、Mac Agent は署名検証後に pending pairing request として保存します。Mac 側承認 UI は未実装のため、現時点では `remotepad-agent --list-pairing-requests` と `remotepad-agent --approve-pairing <device-id>` で承認します。
+
 初期権限:
 
 ```json

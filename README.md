@@ -20,9 +20,20 @@ The initial implementation starts with the shared protocol layer used by the fut
 - Development CLI client
 - Unit tests for frame, control, terminal, and browser proxy messages
 
-Current authentication uses a signed nonce challenge. The development client sends a Curve25519 signing public key in `ClientHello`, signs the auth transcript, and the agent verifies `AuthProof.signature`. Until real pairing UI and audit logs are implemented, trusted devices are managed with explicit development CLI commands and the agent remains loopback-only without Bonjour.
+Current authentication uses a signed nonce challenge. The client sends a Curve25519 signing public key in `ClientHello`, signs the auth transcript, and the agent verifies `AuthProof.signature`. The iPad app can now submit a signed pairing request. Until the full Mac approval UI and audit logs are implemented, pending requests are approved with explicit development CLI commands and the agent remains loopback-only without Bonjour.
 
-To trust the development client:
+To pair the iPad app:
+
+1. Start `remotepad-agent`.
+2. In the iPad app, enter the agent host/port and tap `Request Pairing`.
+3. Approve the pending request on the Mac:
+
+```sh
+swift run remotepad-agent --list-pairing-requests
+swift run remotepad-agent --approve-pairing <device-id>
+```
+
+To trust a development client directly:
 
 ```sh
 swift run remotepad-dev-client --identity
@@ -52,10 +63,11 @@ xcodegen generate
 
 Open `RemotePad.xcodeproj` and run the `RemotePad` iPad app target.
 
-The app shows its development device identity. Trust that identity on the Mac before connecting:
+The app can submit a pairing request to the Mac agent. Approve it on the Mac before connecting:
 
 ```sh
-swift run remotepad-agent --trust-device <ipad-device-id> <ipad-public-key-base64>
+swift run remotepad-agent --list-pairing-requests
+swift run remotepad-agent --approve-pairing <ipad-device-id>
 ```
 
 For simulator development with the current loopback-only agent, use `127.0.0.1` as the agent host. Real iPad device testing requires the later LAN-safe pairing/agent exposure work.
