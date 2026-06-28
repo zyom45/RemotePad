@@ -199,6 +199,21 @@ public struct PairingResult: Codable, Equatable, Sendable {
     }
 }
 
+public struct PairingStatusRequest: Codable, Equatable, Sendable {
+    public var kind: String
+    public var deviceID: UUID
+
+    public init(deviceID: UUID) {
+        self.kind = "pairing.status"
+        self.deviceID = deviceID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case deviceID = "device_id"
+    }
+}
+
 public struct ClientHello: Codable, Equatable, Sendable {
     public var kind: String
     public var deviceID: UUID

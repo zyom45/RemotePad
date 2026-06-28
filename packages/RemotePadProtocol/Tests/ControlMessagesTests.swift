@@ -37,6 +37,20 @@ import Testing
     #expect(decoded.kind == "pairing.result")
 }
 
+@Test func pairingStatusRequestRoundTrips() throws {
+    let request = PairingStatusRequest(
+        deviceID: UUID(uuidString: "00000000-0000-0000-0000-0000000000aa")!
+    )
+
+    let frame = try FrameCodec.decode(
+        try FrameCodec.encodeHeader(request, type: .request, channelID: 1, requestID: 3)
+    )
+    let decoded = try FrameCodec.decodeHeader(PairingStatusRequest.self, from: frame)
+
+    #expect(decoded == request)
+    #expect(decoded.kind == "pairing.status")
+}
+
 @Test func pairingTranscriptCanBeSignedAndVerified() throws {
     let privateKey = Curve25519.Signing.PrivateKey()
     let identity = DeviceIdentity(
