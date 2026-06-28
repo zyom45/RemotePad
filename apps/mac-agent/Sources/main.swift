@@ -420,6 +420,9 @@ final class AgentConnection {
         case "pairing.response":
             let message = try FrameCodec.decodeHeader(PairingResponse.self, from: frame)
             handlePairingResponse(message, requestID: frame.requestID)
+        case "pairing.status":
+            let message = try FrameCodec.decodeHeader(PairingStatusRequest.self, from: frame)
+            handlePairingStatus(message, requestID: frame.requestID)
         case "client.hello":
             let message = try FrameCodec.decodeHeader(ClientHello.self, from: frame)
             handleClientHello(message, requestID: frame.requestID)
@@ -540,6 +543,32 @@ final class AgentConnection {
             requestID: requestID
         )
         print("pending pairing request \(identity.deviceID) \(identity.deviceName)")
+    }
+
+    private func handlePairingStatus(_ message: PairingStatusRequest, requestID: UInt32) {
+        if trustedDeviceStore.publicKey(for: message.deviceID) != nil {
+            sendPairingResult(
+                accepted: true,
+                status: "approved",
+                deviceID: message.deviceID,
+                requestID: requestID
+            )
+        } else if pendingPairingStore.identity(for: message.deviceID) != nil {
+            sendPairingResult(
+                accepted: true,
+                status: "pending_approval",
+                deviceID: message.deviceID,
+                requestID: requestID
+            )
+        } else {
+            sendPairingResult(
+                accepted: false,
+                status: "not_found",
+                deviceID: message.deviceID,
+                reason: "pairing_request_not_found",
+                requestID: requestID
+            )
+        }
     }
 
     private func sendPairingResult(
