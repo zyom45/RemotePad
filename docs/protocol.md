@@ -107,6 +107,8 @@ sequenceDiagram
 
 現在の開発実装では、iPad App が `pairing.start` を送り、Mac Agent が `pairing.challenge` を返します。iPad App は `PairingTranscript` に署名した `pairing.response` を送り、Mac Agent は署名検証後に pending pairing request として保存します。Mac 側承認 UI は未実装のため、現時点では `remotepad-agent --list-pairing-requests` と `remotepad-agent --approve-pairing <device-id>` で承認します。
 
+承認状態は `pairing.status` で確認できます。Mac Agent は `approved`、`pending_approval`、`not_found` のいずれかを `pairing.result` で返します。
+
 初期権限:
 
 ```json

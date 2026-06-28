@@ -46,6 +46,7 @@ To verify the pairing protocol from the CLI:
 swift run remotepad-dev-client --pair <agent-port> "RemotePad CLI Pairing Test"
 swift run remotepad-agent --list-pairing-requests
 swift run remotepad-agent --approve-pairing <device-id>
+swift run remotepad-dev-client --pair-status <agent-port>
 ```
 
 To inspect or revoke trusted devices:
