@@ -20,6 +20,44 @@ import Testing
     #expect(decoded.kind == "pairing.start")
 }
 
+@Test func pairingResultRoundTrips() throws {
+    let result = PairingResult(
+        accepted: true,
+        status: "pending_approval",
+        deviceID: UUID(uuidString: "00000000-0000-0000-0000-0000000000aa")!,
+        permissions: .mvpDefault
+    )
+
+    let frame = try FrameCodec.decode(
+        try FrameCodec.encodeHeader(result, type: .response, channelID: 1, requestID: 2)
+    )
+    let decoded = try FrameCodec.decodeHeader(PairingResult.self, from: frame)
+
+    #expect(decoded == result)
+    #expect(decoded.kind == "pairing.result")
+}
+
+@Test func pairingTranscriptCanBeSignedAndVerified() throws {
+    let privateKey = Curve25519.Signing.PrivateKey()
+    let identity = DeviceIdentity(
+        deviceID: UUID(uuidString: "00000000-0000-0000-0000-0000000000aa")!,
+        deviceName: "Test iPad",
+        deviceType: .ipad,
+        publicKey: privateKey.publicKey.rawRepresentation,
+        createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+    )
+    let transcript = PairingTranscript.make(
+        challenge: Data([0x01, 0x02, 0x03]),
+        ipadIdentity: identity,
+        macDeviceID: UUID(uuidString: "00000000-0000-0000-0000-0000000000bb")!
+    )
+
+    let signature = try privateKey.signature(for: transcript)
+
+    #expect(privateKey.publicKey.isValidSignature(signature, for: transcript))
+    #expect(!privateKey.publicKey.isValidSignature(signature, for: transcript + Data([0xff])))
+}
+
 @Test func sessionHandshakeMessagesRoundTrip() throws {
     let deviceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     let nonce = Data([1, 2, 3, 4])

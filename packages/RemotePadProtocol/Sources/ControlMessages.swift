@@ -166,6 +166,39 @@ public struct PairingApproved: Codable, Equatable, Sendable {
     }
 }
 
+public struct PairingResult: Codable, Equatable, Sendable {
+    public var kind: String
+    public var accepted: Bool
+    public var status: String
+    public var deviceID: UUID
+    public var permissions: Permissions?
+    public var reason: String?
+
+    public init(
+        accepted: Bool,
+        status: String,
+        deviceID: UUID,
+        permissions: Permissions? = nil,
+        reason: String? = nil
+    ) {
+        self.kind = "pairing.result"
+        self.accepted = accepted
+        self.status = status
+        self.deviceID = deviceID
+        self.permissions = permissions
+        self.reason = reason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case accepted
+        case status
+        case deviceID = "device_id"
+        case permissions
+        case reason
+    }
+}
+
 public struct ClientHello: Codable, Equatable, Sendable {
     public var kind: String
     public var deviceID: UUID
@@ -331,6 +364,25 @@ public enum AuthTranscript {
         data.appendLengthPrefixed(clientNonce)
         data.appendUUID(serverDeviceID)
         data.appendLengthPrefixed(serverNonce)
+        return data
+    }
+}
+
+public enum PairingTranscript {
+    public static func make(
+        challenge: Data,
+        ipadIdentity: DeviceIdentity,
+        macDeviceID: UUID,
+        protocolVersion: UInt8 = RemotePadProtocol.currentVersion
+    ) -> Data {
+        var data = Data("RemotePad pairing v1".utf8)
+        data.append(protocolVersion)
+        data.appendLengthPrefixed(challenge)
+        data.appendUUID(ipadIdentity.deviceID)
+        data.appendLengthPrefixed(Data(ipadIdentity.deviceName.utf8))
+        data.appendLengthPrefixed(Data(ipadIdentity.deviceType.rawValue.utf8))
+        data.appendLengthPrefixed(ipadIdentity.publicKey)
+        data.appendUUID(macDeviceID)
         return data
     }
 }
