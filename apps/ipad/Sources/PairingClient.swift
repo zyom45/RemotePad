@@ -174,3 +174,113 @@ enum PairingClientError: Error {
     case missingChallenge
     case remote(String)
 }
+
+final class PairingStatusClient: @unchecked Sendable {
+    private let agentHost: String
+    private let agentPort: UInt16
+    private let deviceID: UUID
+    private let queue = DispatchQueue(label: "RemotePad.iPad.PairingStatusClient")
+    private let decoder = FrameStreamDecoder()
+
+    private var connection: NWConnection?
+    private var continuation: CheckedContinuation<PairingClientResult, Error>?
+
+    init(agentHost: String, agentPort: UInt16, deviceID: UUID) {
+        self.agentHost = agentHost
+        self.agentPort = agentPort
+        self.deviceID = deviceID
+    }
+
+    func run() async throws -> PairingClientResult {
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let connection = NWConnection(
+                host: NWEndpoint.Host(agentHost),
+                port: NWEndpoint.Port(rawValue: agentPort)!,
+                using: .tcp
+            )
+            self.connection = connection
+            connection.stateUpdateHandler = { [weak self] state in
+                self?.handleState(state)
+            }
+            connection.start(queue: queue)
+        }
+    }
+
+    private func handleState(_ state: NWConnection.State) {
+        switch state {
+        case .ready:
+            sendStatusRequest()
+            receive()
+        case .failed(let error):
+            finish(throwing: error)
+        default:
+            break
+        }
+    }
+
+    private func sendStatusRequest() {
+        do {
+            let data = try FrameCodec.encodeHeader(
+                PairingStatusRequest(deviceID: deviceID),
+                type: .request,
+                channelID: 1,
+                requestID: 1
+            )
+            connection?.send(content: data, completion: .contentProcessed { [weak self] error in
+                if let error {
+                    self?.finish(throwing: error)
+                }
+            })
+        } catch {
+            finish(throwing: error)
+        }
+    }
+
+    private func receive() {
+        connection?.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            if let error {
+                self.finish(throwing: error)
+                return
+            }
+
+            if let data, !data.isEmpty {
+                do {
+                    let frames = try self.decoder.append(data)
+                    for frame in frames {
+                        let header = try FrameCodec.decodeHeader(MessageHeader.self, from: frame)
+                        if header.kind == "pairing.result" {
+                            let result = try FrameCodec.decodeHeader(PairingResult.self, from: frame)
+                            self.finish(returning: PairingClientResult(status: result.status, deviceID: result.deviceID, reason: result.reason))
+                            return
+                        }
+                    }
+                } catch {
+                    self.finish(throwing: error)
+                    return
+                }
+            }
+
+            if isComplete {
+                self.finish(throwing: PairingClientError.connectionClosed)
+            } else {
+                self.receive()
+            }
+        }
+    }
+
+    private func finish(returning result: PairingClientResult) {
+        connection?.cancel()
+        connection = nil
+        continuation?.resume(returning: result)
+        continuation = nil
+    }
+
+    private func finish(throwing error: Error) {
+        connection?.cancel()
+        connection = nil
+        continuation?.resume(throwing: error)
+        continuation = nil
+    }
+}

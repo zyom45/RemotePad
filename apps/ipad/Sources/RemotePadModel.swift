@@ -80,4 +80,26 @@ final class RemotePadModel: ObservableObject {
             }
         }
     }
+
+    func checkPairingStatus() {
+        guard let agentPort = UInt16(agentPort) else {
+            pairingStatus = "Invalid agent port"
+            return
+        }
+
+        pairingStatus = "Checking..."
+        let client = PairingStatusClient(
+            agentHost: agentHost,
+            agentPort: agentPort,
+            deviceID: identity.deviceID
+        )
+        Task {
+            do {
+                let result = try await client.run()
+                pairingStatus = "\(result.status): \(result.deviceID.uuidString)"
+            } catch {
+                pairingStatus = "Failed: \(error)"
+            }
+        }
+    }
 }

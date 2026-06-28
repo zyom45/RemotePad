@@ -26,6 +26,9 @@ struct ContentView: View {
                     Button("Request Pairing") {
                         model.requestPairing()
                     }
+                    Button("Check Pairing Status") {
+                        model.checkPairingStatus()
+                    }
                     Button(model.isProxyRunning ? "Stop Proxy" : "Start Proxy") {
                         model.isProxyRunning ? model.stopProxy() : model.startProxy()
                     }

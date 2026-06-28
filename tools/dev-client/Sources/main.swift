@@ -16,6 +16,11 @@ struct RemotePadDevClientCommand {
             return
         }
 
+        if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--pair-status" {
+            try await runPairingStatus(arguments: CommandLine.arguments)
+            return
+        }
+
         if handleUtilityCommand(arguments: CommandLine.arguments) {
             return
         }
@@ -69,6 +74,7 @@ struct RemotePadDevClientCommand {
           swift run remotepad-dev-client <port> [--attach-first] [--close-after-ready] [--browser-get <local-port> [path]] [--browser-stream-get <local-port> [path]]
           swift run remotepad-dev-client --local-proxy <agent-port> <listen-port> <target-port>
           swift run remotepad-dev-client --pair <agent-port> [device-name]
+          swift run remotepad-dev-client --pair-status <agent-port>
           swift run remotepad-dev-client --identity
           swift run remotepad-dev-client --reset-identity
         """)
@@ -112,6 +118,24 @@ struct RemotePadDevClientCommand {
         )
         let result = try await client.run()
         print("pairing result")
+        print("  accepted: \(result.accepted)")
+        print("  status: \(result.status)")
+        print("  device_id: \(result.deviceID)")
+        if let reason = result.reason {
+            print("  reason: \(reason)")
+        }
+    }
+
+    private static func runPairingStatus(arguments: [String]) async throws {
+        guard arguments.count == 3, let agentPort = UInt16(arguments[2]) else {
+            print("usage: swift run remotepad-dev-client --pair-status <agent-port>")
+            return
+        }
+
+        let identity = DevClientIdentity.loadOrCreate()
+        let client = DevPairingStatusClient(agentPort: agentPort, deviceID: identity.deviceID)
+        let result = try await client.run()
+        print("pairing status")
         print("  accepted: \(result.accepted)")
         print("  status: \(result.status)")
         print("  device_id: \(result.deviceID)")
@@ -1121,6 +1145,119 @@ enum DevPairingError: Error {
     case connectionClosed
     case missingChallenge
     case remote(String)
+}
+
+final class DevPairingStatusClient: @unchecked Sendable {
+    private let agentPort: UInt16
+    private let deviceID: UUID
+    private let queue = DispatchQueue(label: "RemotePadDevPairingStatusClient")
+    private let decoder = FrameStreamDecoder()
+
+    private var connection: NWConnection?
+    private var continuation: CheckedContinuation<DevPairingResult, Error>?
+
+    init(agentPort: UInt16, deviceID: UUID) {
+        self.agentPort = agentPort
+        self.deviceID = deviceID
+    }
+
+    func run() async throws -> DevPairingResult {
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let connection = NWConnection(
+                host: "127.0.0.1",
+                port: NWEndpoint.Port(rawValue: agentPort)!,
+                using: .tcp
+            )
+            self.connection = connection
+            connection.stateUpdateHandler = { [weak self] state in
+                self?.handleState(state)
+            }
+            connection.start(queue: queue)
+        }
+    }
+
+    private func handleState(_ state: NWConnection.State) {
+        switch state {
+        case .ready:
+            sendStatusRequest()
+            receive()
+        case .failed(let error):
+            finish(throwing: error)
+        default:
+            break
+        }
+    }
+
+    private func sendStatusRequest() {
+        do {
+            let data = try FrameCodec.encodeHeader(
+                PairingStatusRequest(deviceID: deviceID),
+                type: .request,
+                channelID: 1,
+                requestID: 1
+            )
+            connection?.send(content: data, completion: .contentProcessed { [weak self] error in
+                if let error {
+                    self?.finish(throwing: error)
+                }
+            })
+        } catch {
+            finish(throwing: error)
+        }
+    }
+
+    private func receive() {
+        connection?.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            if let error {
+                self.finish(throwing: error)
+                return
+            }
+
+            if let data, !data.isEmpty {
+                do {
+                    let frames = try self.decoder.append(data)
+                    for frame in frames {
+                        let header = try FrameCodec.decodeHeader(MessageHeader.self, from: frame)
+                        if header.kind == "pairing.result" {
+                            let result = try FrameCodec.decodeHeader(PairingResult.self, from: frame)
+                            self.finish(returning: DevPairingResult(
+                                accepted: result.accepted,
+                                status: result.status,
+                                deviceID: result.deviceID,
+                                reason: result.reason
+                            ))
+                            return
+                        }
+                    }
+                } catch {
+                    self.finish(throwing: error)
+                    return
+                }
+            }
+
+            if isComplete {
+                self.finish(throwing: DevPairingError.connectionClosed)
+            } else {
+                self.receive()
+            }
+        }
+    }
+
+    private func finish(returning result: DevPairingResult) {
+        connection?.cancel()
+        connection = nil
+        continuation?.resume(returning: result)
+        continuation = nil
+    }
+
+    private func finish(throwing error: Error) {
+        connection?.cancel()
+        connection = nil
+        continuation?.resume(throwing: error)
+        continuation = nil
+    }
 }
 
 struct DevClientIdentity {
