@@ -13,6 +13,10 @@ let package = Package(
             name: "RemotePadProtocol",
             targets: ["RemotePadProtocol"]
         ),
+        .library(
+            name: "RemotePadAgentSupport",
+            targets: ["RemotePadAgentSupport"]
+        ),
         .executable(
             name: "remotepad-agent",
             targets: ["RemotePadAgent"]
@@ -27,9 +31,14 @@ let package = Package(
             name: "RemotePadProtocol",
             path: "packages/RemotePadProtocol/Sources"
         ),
+        .target(
+            name: "RemotePadAgentSupport",
+            dependencies: ["RemotePadProtocol"],
+            path: "packages/RemotePadAgentSupport/Sources"
+        ),
         .executableTarget(
             name: "RemotePadAgent",
-            dependencies: ["RemotePadProtocol"],
+            dependencies: ["RemotePadProtocol", "RemotePadAgentSupport"],
             path: "apps/mac-agent/Sources"
         ),
         .executableTarget(

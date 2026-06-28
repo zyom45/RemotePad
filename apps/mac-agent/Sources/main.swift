@@ -2,6 +2,7 @@ import Foundation
 import Darwin
 import CryptoKit
 import Network
+import RemotePadAgentSupport
 import RemotePadProtocol
 
 @main
@@ -1067,115 +1068,6 @@ final class BrowserTCPStream {
             }
         default:
             break
-        }
-    }
-}
-
-final class TrustedDeviceStore {
-    struct Entry {
-        var deviceID: UUID
-        var publicKey: Data
-    }
-
-    private let defaults = UserDefaults.standard
-    private let key = "RemotePadTrustedDevicePublicKeys"
-
-    func publicKey(for deviceID: UUID) -> Data? {
-        allKeys()[deviceID.uuidString]
-    }
-
-    func list() -> [Entry] {
-        allKeys()
-            .compactMap { key, publicKey -> Entry? in
-                guard let deviceID = UUID(uuidString: key) else { return nil }
-                return Entry(deviceID: deviceID, publicKey: publicKey)
-            }
-            .sorted { $0.deviceID.uuidString < $1.deviceID.uuidString }
-    }
-
-    func trust(publicKey: Data, for deviceID: UUID) {
-        var keys = allKeys()
-        keys[deviceID.uuidString] = publicKey
-        defaults.set(encode(keys), forKey: key)
-    }
-
-    func revoke(deviceID: UUID) -> Bool {
-        var keys = allKeys()
-        guard keys.removeValue(forKey: deviceID.uuidString) != nil else {
-            return false
-        }
-        defaults.set(encode(keys), forKey: key)
-        return true
-    }
-
-    func removeAll() {
-        defaults.removeObject(forKey: key)
-    }
-
-    private func allKeys() -> [String: Data] {
-        guard let encoded = defaults.dictionary(forKey: key) as? [String: String] else {
-            return [:]
-        }
-
-        return encoded.reduce(into: [String: Data]()) { result, entry in
-            if let data = Data(base64Encoded: entry.value) {
-                result[entry.key] = data
-            }
-        }
-    }
-
-    private func encode(_ keys: [String: Data]) -> [String: String] {
-        keys.mapValues { $0.base64EncodedString() }
-    }
-}
-
-final class PendingPairingRequestStore {
-    private let defaults = UserDefaults.standard
-    private let key = "RemotePadPendingPairingRequests"
-
-    func identity(for deviceID: UUID) -> DeviceIdentity? {
-        allRequests()[deviceID.uuidString]
-    }
-
-    func list() -> [DeviceIdentity] {
-        allRequests()
-            .values
-            .sorted { $0.createdAt < $1.createdAt }
-    }
-
-    func save(_ identity: DeviceIdentity) {
-        var requests = allRequests()
-        requests[identity.deviceID.uuidString] = identity
-        defaults.set(encode(requests), forKey: key)
-    }
-
-    @discardableResult
-    func remove(deviceID: UUID) -> Bool {
-        var requests = allRequests()
-        guard requests.removeValue(forKey: deviceID.uuidString) != nil else {
-            return false
-        }
-        defaults.set(encode(requests), forKey: key)
-        return true
-    }
-
-    private func allRequests() -> [String: DeviceIdentity] {
-        guard let encoded = defaults.dictionary(forKey: key) as? [String: Data] else {
-            return [:]
-        }
-
-        return encoded.reduce(into: [String: DeviceIdentity]()) { result, entry in
-            if let identity = try? JSONDecoder.remotePad.decode(DeviceIdentity.self, from: entry.value) {
-                result[entry.key] = identity
-            }
-        }
-    }
-
-    private func encode(_ requests: [String: DeviceIdentity]) -> [String: Data] {
-        requests.reduce(into: [String: Data]()) { result, entry in
-            if let data = try? JSONEncoder.remotePad.encode(entry.value) {
-                result[entry.key] = data
-            }
         }
     }
 }
