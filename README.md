@@ -40,6 +40,14 @@ swift run remotepad-dev-client --identity
 swift run remotepad-agent --trust-device <device-id> <public-key-base64>
 ```
 
+To verify the pairing protocol from the CLI:
+
+```sh
+swift run remotepad-dev-client --pair <agent-port> "RemotePad CLI Pairing Test"
+swift run remotepad-agent --list-pairing-requests
+swift run remotepad-agent --approve-pairing <device-id>
+```
+
 To inspect or revoke trusted devices:
 
 ```sh
