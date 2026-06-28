@@ -1,6 +1,14 @@
 import Foundation
 import RemotePadProtocol
 
+public enum RemotePadAgentDefaults {
+    public static let suiteName = "com.remotepad.agent"
+
+    public static var shared: UserDefaults {
+        UserDefaults(suiteName: suiteName) ?? .standard
+    }
+}
+
 public final class TrustedDeviceStore {
     public struct Entry: Sendable {
         public var deviceID: UUID
@@ -15,8 +23,9 @@ public final class TrustedDeviceStore {
     private let defaults: UserDefaults
     private let key = "RemotePadTrustedDevicePublicKeys"
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = RemotePadAgentDefaults.shared) {
         self.defaults = defaults
+        migrateLegacyStandardValueIfNeeded()
     }
 
     public func publicKey(for deviceID: UUID) -> Data? {
@@ -67,14 +76,24 @@ public final class TrustedDeviceStore {
     private func encode(_ keys: [String: Data]) -> [String: String] {
         keys.mapValues { $0.base64EncodedString() }
     }
+
+    private func migrateLegacyStandardValueIfNeeded() {
+        guard defaults !== UserDefaults.standard,
+              defaults.object(forKey: key) == nil,
+              let legacy = UserDefaults.standard.object(forKey: key) else {
+            return
+        }
+        defaults.set(legacy, forKey: key)
+    }
 }
 
 public final class PendingPairingRequestStore {
     private let defaults: UserDefaults
     private let key = "RemotePadPendingPairingRequests"
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = RemotePadAgentDefaults.shared) {
         self.defaults = defaults
+        migrateLegacyStandardValueIfNeeded()
     }
 
     public func identity(for deviceID: UUID) -> DeviceIdentity? {
@@ -121,5 +140,14 @@ public final class PendingPairingRequestStore {
                 result[entry.key] = data
             }
         }
+    }
+
+    private func migrateLegacyStandardValueIfNeeded() {
+        guard defaults !== UserDefaults.standard,
+              defaults.object(forKey: key) == nil,
+              let legacy = UserDefaults.standard.object(forKey: key) else {
+            return
+        }
+        defaults.set(legacy, forKey: key)
     }
 }
