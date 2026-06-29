@@ -121,10 +121,6 @@ private struct TerminalView: View {
                 Button("Clear") {
                     model.clearTerminalOutput()
                 }
-                Button("Ctrl-C") {
-                    model.sendTerminalInterrupt()
-                }
-                .disabled(!model.isTerminalConnected)
                 Button(model.isTerminalConnected ? "Disconnect" : "Connect") {
                     model.isTerminalConnected ? model.disconnectTerminal() : model.connectTerminal()
                 }
@@ -151,6 +147,8 @@ private struct TerminalView: View {
 
             Divider()
 
+            TerminalKeyBar()
+
             HStack(spacing: 8) {
                 TextField("Command", text: $model.terminalInput)
                     .textInputAutocapitalization(.never)
@@ -166,5 +164,32 @@ private struct TerminalView: View {
             }
             .padding(12)
         }
+    }
+}
+
+private struct TerminalKeyBar: View {
+    @EnvironmentObject private var model: RemotePadModel
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button("Esc") {
+                    model.sendTerminalEscape()
+                }
+                Button("Tab") {
+                    model.sendTerminalTab()
+                }
+                Button("Ctrl-C") {
+                    model.sendTerminalInterrupt()
+                }
+                Button("Clear") {
+                    model.clearTerminalOutput()
+                }
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .disabled(!model.isTerminalConnected)
     }
 }

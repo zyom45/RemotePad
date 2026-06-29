@@ -20,6 +20,7 @@ final class RemotePadModel: ObservableObject {
 
     private var proxy: LocalBrowserProxy?
     private var terminalClient: TerminalClient?
+    private var terminalBuffer = TerminalTextBuffer()
 
     var browserURL: URL? {
         guard let port = UInt16(localPort) else { return nil }
@@ -115,6 +116,7 @@ final class RemotePadModel: ObservableObject {
         }
 
         terminalClient?.close()
+        terminalBuffer.clear()
         terminalOutput = ""
         terminalStatus = "Connecting"
         isTerminalConnected = true
@@ -133,7 +135,7 @@ final class RemotePadModel: ObservableObject {
             },
             onOutput: { [weak self] output in
                 Task { @MainActor in
-                    self?.terminalOutput += output
+                    self?.appendTerminalOutput(output)
                 }
             }
         )
@@ -159,7 +161,21 @@ final class RemotePadModel: ObservableObject {
         terminalClient?.sendInput("\u{03}")
     }
 
+    func sendTerminalEscape() {
+        terminalClient?.sendInput("\u{1B}")
+    }
+
+    func sendTerminalTab() {
+        terminalClient?.sendInput("\t")
+    }
+
     func clearTerminalOutput() {
+        terminalBuffer.clear()
         terminalOutput = ""
+    }
+
+    private func appendTerminalOutput(_ output: String) {
+        terminalBuffer.append(output)
+        terminalOutput = terminalBuffer.text
     }
 }

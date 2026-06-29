@@ -89,9 +89,10 @@ REMOTEPAD_AGENT_PORT=53244 swift run remotepad-agent
 - Initial terminal workspace.
 - Authenticated terminal connect / disconnect.
 - Terminal command input.
+- Terminal escape and tab helper keys.
 - Terminal interrupt.
 - Terminal output clear.
-- Terminal output display.
+- Terminal output display with lightweight ANSI/control-sequence cleanup.
 - WebView scaffold.
 - Local browser proxy scaffold.
 
@@ -213,7 +214,7 @@ Overall product progress: roughly 25-30%.
 
 ## Next Recommended Work
 
-1. Add ANSI terminal rendering and better keyboard handling to the iPad terminal.
+1. Replace lightweight terminal text cleanup with a real terminal emulator view.
 2. Wire the iPad browser UI to the local proxy path.
 3. Move Mac agent into a menu bar app with pairing status and approvals.
 4. Define the production security model before enabling LAN exposure.
