@@ -64,6 +64,19 @@ swift run remotepad-agent --revoke-device <device-id>
 swift test
 ```
 
+Run the local integration check:
+
+```sh
+scripts/check-local-integration.sh
+```
+
+The integration check starts a loopback-only agent, submits and approves a pairing request, verifies approved pairing status, creates an authenticated terminal, checks for `__REMOTEPAD_READY__`, revokes the verification device, and runs `swift test`.
+
+Useful agent environment variables:
+
+- `REMOTEPAD_OPEN_PAIRING_APPROVER=0`: disable automatic pairing approver launch.
+- `REMOTEPAD_AGENT_PORT=<port>`: bind the agent to a fixed local port for tests.
+
 ## iPad App
 
 Generate or refresh the Xcode project:

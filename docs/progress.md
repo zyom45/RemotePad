@@ -46,6 +46,12 @@ This proves the core protocol, pairing, authentication, and terminal execution p
 REMOTEPAD_OPEN_PAIRING_APPROVER=0 swift run remotepad-agent
 ```
 
+- Environment flag to bind the agent to a fixed local port for tests:
+
+```sh
+REMOTEPAD_AGENT_PORT=53244 swift run remotepad-agent
+```
+
 ### Pairing
 
 - Device identity with Curve25519 signing public key.
@@ -92,13 +98,24 @@ REMOTEPAD_OPEN_PAIRING_APPROVER=0 swift run remotepad-agent
 - Browser GET check.
 - Browser stream check.
 - Local proxy check.
+- One-command local integration check:
+
+```sh
+scripts/check-local-integration.sh
+```
 
 ## Verified
 
 Latest verified flow:
 
 ```sh
-REMOTEPAD_OPEN_PAIRING_APPROVER=0 swift run remotepad-agent
+scripts/check-local-integration.sh
+```
+
+The script covers:
+
+```sh
+REMOTEPAD_OPEN_PAIRING_APPROVER=0 REMOTEPAD_AGENT_PORT=<port> swift run remotepad-agent
 swift run remotepad-dev-client --pair <agent-port> "RemotePad Dev iPad"
 swift run remotepad-agent --approve-pairing <device-id>
 swift run remotepad-dev-client --pair-status <agent-port>
@@ -190,11 +207,11 @@ Overall product progress: roughly 25-30%.
 
 ## Next Recommended Work
 
-1. Add a one-command local integration check for `pair -> approve -> status -> terminal`.
-2. Build the iPad terminal UI around the existing terminal protocol.
-3. Wire the iPad browser UI to the local proxy path.
-4. Move Mac agent into a menu bar app with pairing status and approvals.
-5. Define the production security model before enabling LAN exposure.
+1. Build the iPad terminal UI around the existing terminal protocol.
+2. Wire the iPad browser UI to the local proxy path.
+3. Move Mac agent into a menu bar app with pairing status and approvals.
+4. Define the production security model before enabling LAN exposure.
+5. Add Keychain storage for identities and trusted keys.
 
 ## Documentation Map
 

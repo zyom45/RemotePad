@@ -196,6 +196,7 @@ struct AgentConfiguration {
     var publishesBonjour: Bool
     var allowsDevelopmentTrustOnFirstUse: Bool
     var opensPairingApproverOnRequest: Bool
+    var listenPort: UInt16?
 
     static var `default`: AgentConfiguration {
         AgentConfiguration(
@@ -210,7 +211,8 @@ struct AgentConfiguration {
             opensPairingApproverOnRequest: environmentFlag(
                 "REMOTEPAD_OPEN_PAIRING_APPROVER",
                 defaultValue: true
-            )
+            ),
+            listenPort: environmentPort("REMOTEPAD_AGENT_PORT")
         )
     }
 
@@ -240,6 +242,13 @@ struct AgentConfiguration {
         default:
             return defaultValue
         }
+    }
+
+    private static func environmentPort(_ key: String) -> UInt16? {
+        guard let value = ProcessInfo.processInfo.environment[key] else {
+            return nil
+        }
+        return UInt16(value)
     }
 }
 
@@ -273,11 +282,12 @@ final class RemotePadAgent {
 
     func start() throws {
         let parameters = NWParameters.tcp
+        let listenPort = configuration.listenPort.flatMap(NWEndpoint.Port.init(rawValue:)) ?? .any
         if configuration.networkExposure == .loopbackOnly {
             parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
         }
 
-        let listener = try NWListener(using: parameters, on: .any)
+        let listener = try NWListener(using: parameters, on: listenPort)
         if configuration.publishesBonjour {
             listener.service = NWListener.Service(
                 name: configuration.deviceName,
