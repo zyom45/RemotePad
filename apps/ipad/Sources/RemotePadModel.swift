@@ -13,8 +13,13 @@ final class RemotePadModel: ObservableObject {
     @Published var status = "Stopped"
     @Published var pairingStatus = "Not paired"
     @Published var isProxyRunning = false
+    @Published var terminalStatus = "Disconnected"
+    @Published var terminalOutput = ""
+    @Published var terminalInput = ""
+    @Published var isTerminalConnected = false
 
     private var proxy: LocalBrowserProxy?
+    private var terminalClient: TerminalClient?
 
     var browserURL: URL? {
         guard let port = UInt16(localPort) else { return nil }
@@ -101,5 +106,60 @@ final class RemotePadModel: ObservableObject {
                 pairingStatus = "Failed: \(error)"
             }
         }
+    }
+
+    func connectTerminal() {
+        guard let agentPort = UInt16(agentPort) else {
+            terminalStatus = "Invalid agent port"
+            return
+        }
+
+        terminalClient?.close()
+        terminalOutput = ""
+        terminalStatus = "Connecting"
+        isTerminalConnected = true
+
+        let client = TerminalClient(
+            agentHost: agentHost,
+            agentPort: agentPort,
+            identity: identity,
+            onStatus: { [weak self] status in
+                Task { @MainActor in
+                    self?.terminalStatus = status
+                    if status.hasPrefix("Disconnected") || status.hasPrefix("Connection failed") || status.hasPrefix("Auth rejected") || status.hasPrefix("Terminal closed") {
+                        self?.isTerminalConnected = false
+                    }
+                }
+            },
+            onOutput: { [weak self] output in
+                Task { @MainActor in
+                    self?.terminalOutput += output
+                }
+            }
+        )
+        terminalClient = client
+        client.connect()
+    }
+
+    func disconnectTerminal() {
+        terminalClient?.close()
+        terminalClient = nil
+        isTerminalConnected = false
+        terminalStatus = "Disconnected"
+    }
+
+    func sendTerminalInput() {
+        let input = terminalInput
+        guard !input.isEmpty else { return }
+        terminalInput = ""
+        terminalClient?.sendInput(input + "\n")
+    }
+
+    func sendTerminalInterrupt() {
+        terminalClient?.sendInput("\u{03}")
+    }
+
+    func clearTerminalOutput() {
+        terminalOutput = ""
     }
 }

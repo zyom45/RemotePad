@@ -3,10 +3,20 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var model: RemotePadModel
     @State private var reloadToken = UUID()
+    @State private var workspace = WorkspaceView.terminal
 
     var body: some View {
         NavigationSplitView {
             Form {
+                Section {
+                    Picker("Workspace", selection: $workspace) {
+                        ForEach(WorkspaceView.allCases, id: \.self) { view in
+                            Text(view.title).tag(view)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
                 Section("Connection") {
                     TextField("Agent host", text: $model.agentHost)
                         .textInputAutocapitalization(.never)
@@ -29,6 +39,9 @@ struct ContentView: View {
                     Button("Check Pairing Status") {
                         model.checkPairingStatus()
                     }
+                    Button(model.isTerminalConnected ? "Disconnect Terminal" : "Connect Terminal") {
+                        model.isTerminalConnected ? model.disconnectTerminal() : model.connectTerminal()
+                    }
                     Button(model.isProxyRunning ? "Stop Proxy" : "Start Proxy") {
                         model.isProxyRunning ? model.stopProxy() : model.startProxy()
                     }
@@ -40,6 +53,7 @@ struct ContentView: View {
 
                 Section("Status") {
                     LabeledContent("Pairing", value: model.pairingStatus)
+                    LabeledContent("Terminal", value: model.terminalStatus)
                     Text(model.status)
                     if let url = model.browserURL {
                         Text(url.absoluteString)
@@ -56,12 +70,101 @@ struct ContentView: View {
             }
             .navigationTitle("RemotePad")
         } detail: {
-            if let url = model.browserURL, model.isProxyRunning {
+            switch workspace {
+            case .terminal:
+                TerminalView()
+            case .browser:
+                BrowserWorkspaceView(reloadToken: reloadToken)
+            }
+        }
+    }
+}
+
+private enum WorkspaceView: CaseIterable {
+    case terminal
+    case browser
+
+    var title: String {
+        switch self {
+        case .terminal:
+            "Terminal"
+        case .browser:
+            "Browser"
+        }
+    }
+}
+
+private struct BrowserWorkspaceView: View {
+    @EnvironmentObject private var model: RemotePadModel
+    let reloadToken: UUID
+
+    var body: some View {
+        if let url = model.browserURL, model.isProxyRunning {
                 BrowserView(url: url, reloadToken: reloadToken)
                     .ignoresSafeArea()
-            } else {
-                ContentUnavailableView("Proxy Stopped", systemImage: "network", description: Text("Start the local proxy to open the Mac localhost target."))
+        } else {
+            ContentUnavailableView("Proxy Stopped", systemImage: "network", description: Text("Start the local proxy to open the Mac localhost target."))
+        }
+    }
+}
+
+private struct TerminalView: View {
+    @EnvironmentObject private var model: RemotePadModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(model.terminalStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Clear") {
+                    model.clearTerminalOutput()
+                }
+                Button("Ctrl-C") {
+                    model.sendTerminalInterrupt()
+                }
+                .disabled(!model.isTerminalConnected)
+                Button(model.isTerminalConnected ? "Disconnect" : "Connect") {
+                    model.isTerminalConnected ? model.disconnectTerminal() : model.connectTerminal()
+                }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(model.terminalOutput.isEmpty ? "Connect to start a Mac terminal." : model.terminalOutput)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(12)
+                        .id("terminal-output")
+                }
+                .background(Color(uiColor: .systemBackground))
+                .onChange(of: model.terminalOutput) {
+                    proxy.scrollTo("terminal-output", anchor: .bottom)
+                }
+            }
+
+            Divider()
+
+            HStack(spacing: 8) {
+                TextField("Command", text: $model.terminalInput)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        model.sendTerminalInput()
+                    }
+                Button("Send") {
+                    model.sendTerminalInput()
+                }
+                .disabled(model.terminalInput.isEmpty || !model.isTerminalConnected)
+            }
+            .padding(12)
         }
     }
 }
