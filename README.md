@@ -18,9 +18,11 @@ The initial implementation starts with the shared protocol layer used by the fut
 - Development local listener that forwards `127.0.0.1:<listen>` to Mac localhost over BrowserProxy stream
 - iPad SwiftUI app scaffold with WebView and local listener wiring
 - Development CLI client
+- Mac SwiftUI pairing approver
+- Pairing store tests
 - Unit tests for frame, control, terminal, and browser proxy messages
 
-Current authentication uses a signed nonce challenge. The client sends a Curve25519 signing public key in `ClientHello`, signs the auth transcript, and the agent verifies `AuthProof.signature`. The iPad app can now submit a signed pairing request. Until the full Mac approval UI and audit logs are implemented, pending requests are approved with explicit development CLI commands and the agent remains loopback-only without Bonjour.
+Current authentication uses a signed nonce challenge. The client sends a Curve25519 signing public key in `ClientHello`, signs the auth transcript, and the agent verifies `AuthProof.signature`. The iPad app and development client can submit signed pairing requests. The Mac can approve requests through the SwiftUI pairing approver or explicit development CLI commands. The agent remains loopback-only without Bonjour until the production security model, audit log, and LAN exposure gate are complete.
 
 To pair the iPad app:
 
@@ -149,5 +151,6 @@ The remaining product path is moving this local listener into the iPad app and v
 
 - [Architecture](docs/architecture.md)
 - [MVP](docs/mvp.md)
+- [Progress](docs/progress.md)
 - [Technical Selection](docs/technical-selection.md)
 - [Protocol](docs/protocol.md)

@@ -50,9 +50,10 @@ Terminal は通常 SSH ではなく、Mac Agent が PTY を起動し、RemotePad
 実装ゲート:
 
 - 署名チャレンジ検証は実装済み。
-- UI ペアリング、Mac 側承認、デバイス失効、監査ログが未実装の間は、Mac Agent は `127.0.0.1` のみに待ち受ける。
-- UI ペアリング、Mac 側承認、デバイス失効、監査ログが未実装の間は、Bonjour / mDNS を公開しない。
-- LAN 直結は、ペアリング済み公開鍵による署名チャレンジと失効フローが入った後に有効化する。
+- ペアリング要求、Mac 側承認、デバイス失効の基礎は実装済み。
+- Keychain 保存、E2E 暗号、監査ログ、LAN 公開時の安全ゲートが未完成の間は、Mac Agent は `127.0.0.1` のみに待ち受ける。
+- Keychain 保存、E2E 暗号、監査ログ、LAN 公開時の安全ゲートが未完成の間は、Bonjour / mDNS を公開しない。
+- LAN 直結は、ペアリング済み公開鍵による署名チャレンジ、失効フロー、監査ログ、明示的な公開設定が入った後に有効化する。
 
 ### 4. 外出先接続は VPN 内蔵より E2E Relay 優先
 
@@ -194,8 +195,11 @@ RemotePad/
 ```text
 RemotePad/
   apps/
+    ipad/
     mac-agent/
+    mac-pairing-approver/
   packages/
+    RemotePadAgentSupport/
     RemotePadProtocol/
   tools/
     dev-client/
@@ -204,11 +208,14 @@ RemotePad/
 
 未実装:
 
-- `apps/ipad/`
 - `packages/RemotePadCore/`
-- 本物の UI ペアリング、Mac 側承認、デバイス失効
+- Keychain 保存
+- E2E 暗号
+- 監査ログ
+- Mac メニューバー常駐
 - LAN Discovery
-- iPad WebView / local listener
+- 実用的な iPad Terminal UI
+- 実用的な iPad WebView / local listener UI
 - E2E Relay
 
 推奨構成は維持しますが、実装は Mac Agent、共有Protocol、開発用CLIから開始しています。
