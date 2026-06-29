@@ -10,8 +10,10 @@
 		35B6EC95C2E27A30E8CA7ED1 /* BrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE6EC1EE7B900E75374A84E3 /* BrowserView.swift */; };
 		4AFAE66AA66C1CA5AFB43341 /* LocalBrowserProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ADE1E7AF9CFC03A03916B69 /* LocalBrowserProxy.swift */; };
 		617F1C8E49F6C029CBB3C392 /* TerminalTextBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65C513D22FBDD46E207203DF /* TerminalTextBuffer.swift */; };
+		693A4984ACC50D6654592F32 /* RemotePadTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B56F5520F28FFC11A114B387 /* RemotePadTerminalView.swift */; };
 		7963D1333151CCB7F851271E /* PairingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C53A5A5369DD3B9B7703CB8 /* PairingClient.swift */; };
 		7ACE5C5C55A45FBF6646CC40 /* RemotePadModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5470222DA1F6861F4B2299B /* RemotePadModel.swift */; };
+		9867F106D9F595119771F526 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 5A06F49C74A45440F1DA7C6A /* SwiftTerm */; };
 		A15419809F82D1CE6D70FA34 /* RemotePadProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = 8F02BF582A272021F1B89138 /* RemotePadProtocol */; };
 		A28D9B23EE66AF9A94C2AD9A /* RemotePadApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B68217B1B59A38B58F58DF /* RemotePadApp.swift */; };
 		CC85D9E274F946254883F334 /* TerminalClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0D30A4E2D2C4A45B9045068 /* TerminalClient.swift */; };
@@ -26,6 +28,7 @@
 		57D6ECF5DDAC090FF3F395ED /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		65C513D22FBDD46E207203DF /* TerminalTextBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalTextBuffer.swift; sourceTree = "<group>"; };
 		A5470222DA1F6861F4B2299B /* RemotePadModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePadModel.swift; sourceTree = "<group>"; };
+		B56F5520F28FFC11A114B387 /* RemotePadTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePadTerminalView.swift; sourceTree = "<group>"; };
 		BF90DC17FA7BF611BF4817AE /* RemotePad.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RemotePad.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E0D30A4E2D2C4A45B9045068 /* TerminalClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalClient.swift; sourceTree = "<group>"; };
 		F3B68217B1B59A38B58F58DF /* RemotePadApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePadApp.swift; sourceTree = "<group>"; };
@@ -38,6 +41,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A15419809F82D1CE6D70FA34 /* RemotePadProtocol in Frameworks */,
+				9867F106D9F595119771F526 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -88,6 +92,7 @@
 				3C53A5A5369DD3B9B7703CB8 /* PairingClient.swift */,
 				F3B68217B1B59A38B58F58DF /* RemotePadApp.swift */,
 				A5470222DA1F6861F4B2299B /* RemotePadModel.swift */,
+				B56F5520F28FFC11A114B387 /* RemotePadTerminalView.swift */,
 				E0D30A4E2D2C4A45B9045068 /* TerminalClient.swift */,
 				65C513D22FBDD46E207203DF /* TerminalTextBuffer.swift */,
 			);
@@ -112,6 +117,7 @@
 			name = RemotePad;
 			packageProductDependencies = (
 				8F02BF582A272021F1B89138 /* RemotePadProtocol */,
+				5A06F49C74A45440F1DA7C6A /* SwiftTerm */,
 			);
 			productName = RemotePad;
 			productReference = BF90DC17FA7BF611BF4817AE /* RemotePad.app */;
@@ -137,6 +143,7 @@
 			mainGroup = 6B16D846A9BDF5570094B6C5;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				3FC86A1BF7CE3EC738326096 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				88510DCDCF4E4286C83A97BE /* XCLocalSwiftPackageReference "." */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -159,6 +166,7 @@
 				7963D1333151CCB7F851271E /* PairingClient.swift in Sources */,
 				A28D9B23EE66AF9A94C2AD9A /* RemotePadApp.swift in Sources */,
 				7ACE5C5C55A45FBF6646CC40 /* RemotePadModel.swift in Sources */,
+				693A4984ACC50D6654592F32 /* RemotePadTerminalView.swift in Sources */,
 				CC85D9E274F946254883F334 /* TerminalClient.swift in Sources */,
 				617F1C8E49F6C029CBB3C392 /* TerminalTextBuffer.swift in Sources */,
 			);
@@ -354,7 +362,23 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		3FC86A1BF7CE3EC738326096 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.13.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		5A06F49C74A45440F1DA7C6A /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3FC86A1BF7CE3EC738326096 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
 		8F02BF582A272021F1B89138 /* RemotePadProtocol */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RemotePadProtocol;

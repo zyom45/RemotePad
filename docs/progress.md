@@ -92,7 +92,9 @@ REMOTEPAD_AGENT_PORT=53244 swift run remotepad-agent
 - Terminal escape and tab helper keys.
 - Terminal interrupt.
 - Terminal output clear.
-- Terminal output display with lightweight ANSI/control-sequence cleanup.
+- SwiftTerm-backed terminal rendering.
+- Terminal resize propagation.
+- Terminal input via SwiftTerm keyboard handling.
 - WebView scaffold.
 - Local browser proxy scaffold.
 
@@ -201,7 +203,7 @@ Approximate status:
 
 - Secure local pairing and authentication foundation: 40%
 - Terminal backend: 50%
-- iPad terminal product experience: 25%
+- iPad terminal product experience: 35%
 - Mac localhost browser backend: 35%
 - iPad browser product experience: 20%
 - Mac agent product experience: 25%
@@ -214,8 +216,8 @@ Overall product progress: roughly 25-30%.
 
 ## Next Recommended Work
 
-1. Replace lightweight terminal text cleanup with a real terminal emulator view.
-2. Wire the iPad browser UI to the local proxy path.
+1. Wire the iPad browser UI to the local proxy path.
+2. Improve iPad terminal session picker and reconnect behavior.
 3. Move Mac agent into a menu bar app with pairing status and approvals.
 4. Define the production security model before enabling LAN exposure.
 5. Add Keychain storage for identities and trusted keys.

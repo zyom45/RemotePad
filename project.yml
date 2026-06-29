@@ -4,6 +4,9 @@ options:
 packages:
   RemotePadProtocol:
     path: .
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm.git
+    from: 1.13.0
 targets:
   RemotePad:
     type: application
@@ -15,6 +18,8 @@ targets:
     dependencies:
       - package: RemotePadProtocol
         product: RemotePadProtocol
+      - package: SwiftTerm
+        product: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.remotepad.ipad

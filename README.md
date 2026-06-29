@@ -17,7 +17,7 @@ The initial implementation starts with the shared protocol layer used by the fut
 - TCP BrowserProxy stream for Mac localhost tunnels
 - Development local listener that forwards `127.0.0.1:<listen>` to Mac localhost over BrowserProxy stream
 - iPad SwiftUI app scaffold with WebView and local listener wiring
-- iPad terminal workspace with authenticated connect, command input, output display, interrupt, and clear
+- iPad terminal workspace with SwiftTerm rendering, authenticated connect, keyboard input, output display, interrupt, resize, and clear
 - Development CLI client
 - Mac SwiftUI pairing approver
 - Pairing store tests

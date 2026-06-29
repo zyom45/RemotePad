@@ -17,10 +17,12 @@ final class RemotePadModel: ObservableObject {
     @Published var terminalOutput = ""
     @Published var terminalInput = ""
     @Published var isTerminalConnected = false
+    @Published var terminalRenderTick = 0
 
     private var proxy: LocalBrowserProxy?
     private var terminalClient: TerminalClient?
     private var terminalBuffer = TerminalTextBuffer()
+    private var terminalOutputChunks: [Data] = []
 
     var browserURL: URL? {
         guard let port = UInt16(localPort) else { return nil }
@@ -157,6 +159,14 @@ final class RemotePadModel: ObservableObject {
         terminalClient?.sendInput(input + "\n")
     }
 
+    func sendTerminalData(_ data: Data) {
+        terminalClient?.sendData(data)
+    }
+
+    func resizeTerminal(cols: Int, rows: Int) {
+        terminalClient?.resize(cols: cols, rows: rows)
+    }
+
     func sendTerminalInterrupt() {
         terminalClient?.sendInput("\u{03}")
     }
@@ -171,11 +181,21 @@ final class RemotePadModel: ObservableObject {
 
     func clearTerminalOutput() {
         terminalBuffer.clear()
+        terminalOutputChunks = [Data("\u{1B}c".utf8)]
+        terminalRenderTick += 1
         terminalOutput = ""
     }
 
-    private func appendTerminalOutput(_ output: String) {
-        terminalBuffer.append(output)
+    func drainTerminalOutputChunks() -> [Data] {
+        let chunks = terminalOutputChunks
+        terminalOutputChunks.removeAll()
+        return chunks
+    }
+
+    private func appendTerminalOutput(_ output: Data) {
+        terminalOutputChunks.append(output)
+        terminalRenderTick += 1
+        terminalBuffer.append(String(decoding: output, as: UTF8.self))
         terminalOutput = terminalBuffer.text
     }
 }

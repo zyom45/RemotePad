@@ -9,7 +9,7 @@ final class TerminalClient: @unchecked Sendable {
     private let queue = DispatchQueue(label: "RemotePad.iPad.TerminalClient")
     private let decoder = FrameStreamDecoder()
     private let onStatus: @Sendable (String) -> Void
-    private let onOutput: @Sendable (String) -> Void
+    private let onOutput: @Sendable (Data) -> Void
 
     private var connection: NWConnection?
     private var clientNonce: Data?
@@ -25,7 +25,7 @@ final class TerminalClient: @unchecked Sendable {
         agentPort: UInt16,
         identity: AppIdentity,
         onStatus: @escaping @Sendable (String) -> Void,
-        onOutput: @escaping @Sendable (String) -> Void
+        onOutput: @escaping @Sendable (Data) -> Void
     ) {
         self.agentHost = agentHost
         self.agentPort = agentPort
@@ -51,6 +51,10 @@ final class TerminalClient: @unchecked Sendable {
     }
 
     func sendInput(_ text: String) {
+        sendData(Data(text.utf8))
+    }
+
+    func sendData(_ data: Data) {
         queue.async { [weak self] in
             guard let self, let terminalID = self.terminalID else { return }
             self.sendToAgent(
@@ -58,7 +62,21 @@ final class TerminalClient: @unchecked Sendable {
                 type: .data,
                 channelID: 2,
                 requestID: 4,
-                payload: Data(text.utf8)
+                payload: data
+            )
+        }
+    }
+
+    func resize(cols: Int, rows: Int) {
+        queue.async { [weak self] in
+            guard let self, let terminalID = self.terminalID else { return }
+            let safeCols = UInt16(min(max(cols, 1), Int(UInt16.max)))
+            let safeRows = UInt16(min(max(rows, 1), Int(UInt16.max)))
+            self.sendToAgent(
+                TerminalResize(terminalID: terminalID, cols: safeCols, rows: safeRows),
+                type: .request,
+                channelID: 2,
+                requestID: 6
             )
         }
     }
@@ -152,7 +170,7 @@ final class TerminalClient: @unchecked Sendable {
             terminalID = created.terminalID
             onStatus("Terminal ready")
         case "terminal.output":
-            onOutput(String(decoding: frame.payload, as: UTF8.self))
+            onOutput(frame.payload)
         case "terminal.closed":
             let closed = try FrameCodec.decodeHeader(TerminalClosed.self, from: frame)
             onStatus("Terminal closed: \(closed.reason ?? "closed")")

@@ -72,7 +72,7 @@ struct ContentView: View {
         } detail: {
             switch workspace {
             case .terminal:
-                TerminalView()
+                TerminalWorkspaceView()
             case .browser:
                 BrowserWorkspaceView(reloadToken: reloadToken)
             }
@@ -108,7 +108,7 @@ private struct BrowserWorkspaceView: View {
     }
 }
 
-private struct TerminalView: View {
+private struct TerminalWorkspaceView: View {
     @EnvironmentObject private var model: RemotePadModel
 
     var body: some View {
@@ -130,20 +130,12 @@ private struct TerminalView: View {
 
             Divider()
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    Text(model.terminalOutput.isEmpty ? "Connect to start a Mac terminal." : model.terminalOutput)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(12)
-                        .id("terminal-output")
+            RemotePadTerminalView(renderTick: model.terminalRenderTick)
+                .overlay {
+                    if model.terminalOutput.isEmpty && !model.isTerminalConnected {
+                        ContentUnavailableView("Terminal Disconnected", systemImage: "terminal", description: Text("Connect to start a Mac terminal."))
+                    }
                 }
-                .background(Color(uiColor: .systemBackground))
-                .onChange(of: model.terminalOutput) {
-                    proxy.scrollTo("terminal-output", anchor: .bottom)
-                }
-            }
 
             Divider()
 
