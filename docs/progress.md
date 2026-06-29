@@ -156,9 +156,8 @@ Observed results:
 
 ### iPad Daily-Use Browser
 
-- Dev server list.
-- URL entry for Mac localhost targets.
-- WebView connection to the local proxy path.
+- Dev server list beyond fixed presets.
+- Rich URL entry for Mac localhost targets.
 - WebSocket, HMR, SSE, chunked response, and cookie/origin validation on real iPad hardware.
 
 ### Production Security
@@ -205,7 +204,7 @@ Approximate status:
 - Terminal backend: 50%
 - iPad terminal product experience: 35%
 - Mac localhost browser backend: 35%
-- iPad browser product experience: 20%
+- iPad browser product experience: 30%
 - Mac agent product experience: 25%
 - Out-of-home secure connection: 5%
 - Screen sharing: 0%
@@ -216,7 +215,7 @@ Overall product progress: roughly 25-30%.
 
 ## Next Recommended Work
 
-1. Wire the iPad browser UI to the local proxy path.
+1. Validate iPad Browser WebView behavior for WebSocket, HMR, SSE, cookies, and origin handling.
 2. Improve iPad terminal session picker and reconnect behavior.
 3. Move Mac agent into a menu bar app with pairing status and approvals.
 4. Define the production security model before enabling LAN exposure.

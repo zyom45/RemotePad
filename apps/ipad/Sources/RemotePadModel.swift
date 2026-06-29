@@ -59,11 +59,22 @@ final class RemotePadModel: ObservableObject {
         }
     }
 
+    func startProxyIfNeeded() {
+        if !isProxyRunning {
+            startProxy()
+        }
+    }
+
     func stopProxy() {
         proxy?.stop()
         proxy = nil
         isProxyRunning = false
         status = "Stopped"
+    }
+
+    func setBrowserTarget(port: UInt16, path: String = "/") {
+        targetPort = "\(port)"
+        browserPath = path
     }
 
     func requestPairing() {

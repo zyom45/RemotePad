@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var model: RemotePadModel
-    @State private var reloadToken = UUID()
     @State private var workspace = WorkspaceView.terminal
 
     var body: some View {
@@ -45,10 +44,6 @@ struct ContentView: View {
                     Button(model.isProxyRunning ? "Stop Proxy" : "Start Proxy") {
                         model.isProxyRunning ? model.stopProxy() : model.startProxy()
                     }
-                    Button("Reload WebView") {
-                        reloadToken = UUID()
-                    }
-                    .disabled(!model.isProxyRunning)
                 }
 
                 Section("Status") {
@@ -74,7 +69,7 @@ struct ContentView: View {
             case .terminal:
                 TerminalWorkspaceView()
             case .browser:
-                BrowserWorkspaceView(reloadToken: reloadToken)
+                BrowserWorkspaceView()
             }
         }
     }
@@ -96,15 +91,110 @@ private enum WorkspaceView: CaseIterable {
 
 private struct BrowserWorkspaceView: View {
     @EnvironmentObject private var model: RemotePadModel
-    let reloadToken: UUID
+    @StateObject private var browserState = BrowserViewState()
+
+    private let presets: [(label: String, port: UInt16)] = [
+        ("3000", 3000),
+        ("5173", 5173),
+        ("8080", 8080),
+        ("18080", 18080)
+    ]
 
     var body: some View {
-        if let url = model.browserURL, model.isProxyRunning {
-                BrowserView(url: url, reloadToken: reloadToken)
+        VStack(spacing: 0) {
+            browserToolbar
+            Divider()
+
+            if let url = model.browserURL, model.isProxyRunning {
+                BrowserView(url: url, state: browserState)
                     .ignoresSafeArea()
-        } else {
-            ContentUnavailableView("Proxy Stopped", systemImage: "network", description: Text("Start the local proxy to open the Mac localhost target."))
+            } else {
+                ContentUnavailableView("Proxy Stopped", systemImage: "network", description: Text("Start the local proxy to open the Mac localhost target."))
+            }
         }
+    }
+
+    private var browserToolbar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button("Back") {
+                    browserState.goBack()
+                }
+                .disabled(!browserState.canGoBack || !model.isProxyRunning)
+
+                Button("Forward") {
+                    browserState.goForward()
+                }
+                .disabled(!browserState.canGoForward || !model.isProxyRunning)
+
+                Button("Reload") {
+                    browserState.reload()
+                }
+                .disabled(!model.isProxyRunning)
+
+                Button(model.isProxyRunning ? "Stop Proxy" : "Start Proxy") {
+                    model.isProxyRunning ? model.stopProxy() : startProxyAndLoad()
+                }
+
+                Spacer()
+
+                if browserState.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            HStack(spacing: 8) {
+                TextField("Mac port", text: $model.targetPort)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+                TextField("Path", text: $model.browserPath)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        startProxyAndLoad()
+                    }
+                Button("Open") {
+                    startProxyAndLoad()
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(presets, id: \.port) { preset in
+                        Button(preset.label) {
+                            model.setBrowserTarget(port: preset.port)
+                            startProxyAndLoad()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+
+            Text(statusLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .textSelection(.enabled)
+        }
+        .padding(12)
+    }
+
+    private var statusLine: String {
+        if !model.isProxyRunning {
+            return model.status
+        }
+        if !browserState.title.isEmpty {
+            return "\(browserState.title) - \(browserState.currentURL)"
+        }
+        return browserState.currentURL.isEmpty ? model.browserURL?.absoluteString ?? model.status : browserState.currentURL
+    }
+
+    private func startProxyAndLoad() {
+        model.startProxyIfNeeded()
+        browserState.loadCurrentTarget()
     }
 }
 
