@@ -73,6 +73,14 @@ scripts/check-local-integration.sh
 
 The integration check starts a loopback-only agent, submits and approves a pairing request, verifies approved pairing status, creates an authenticated terminal, checks for `__REMOTEPAD_READY__`, revokes the verification device, and runs `swift test`.
 
+Run the browser proxy check:
+
+```sh
+scripts/check-browser-proxy.sh
+```
+
+The browser proxy check starts a local fixture server and verifies HTTP, chunked responses, SSE, and WebSocket upgrade through the RemotePad browser stream and local proxy path.
+
 Useful agent environment variables:
 
 - `REMOTEPAD_OPEN_PAIRING_APPROVER=0`: disable automatic pairing approver launch.

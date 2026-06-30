@@ -107,6 +107,12 @@ REMOTEPAD_AGENT_PORT=53244 swift run remotepad-agent
 - Browser GET check.
 - Browser stream check.
 - Local proxy check.
+- Browser proxy check for HTTP, chunked response, SSE, and WebSocket upgrade:
+
+```sh
+scripts/check-browser-proxy.sh
+```
+
 - One-command local integration check:
 
 ```sh
