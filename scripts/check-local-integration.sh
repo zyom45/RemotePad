@@ -8,7 +8,8 @@ IDENTITY_LOG="$LOG_DIR/identity.log"
 PAIR_LOG="$LOG_DIR/pair.log"
 APPROVE_LOG="$LOG_DIR/approve.log"
 STATUS_LOG="$LOG_DIR/status.log"
-TERMINAL_LOG="$LOG_DIR/terminal.log"
+TERMINAL_CREATE_LOG="$LOG_DIR/terminal-create.log"
+TERMINAL_ATTACH_LOG="$LOG_DIR/terminal-attach.log"
 TEST_LOG="$LOG_DIR/test.log"
 AGENT_PID=""
 DEVICE_ID=""
@@ -127,13 +128,20 @@ require_contains "$STATUS_LOG" "accepted: true"
 require_contains "$STATUS_LOG" "status: approved"
 require_contains "$STATUS_LOG" "device_id: $DEVICE_ID"
 
-log "checking authenticated terminal"
-swift run remotepad-dev-client "$AGENT_PORT" --close-after-ready >"$TERMINAL_LOG" 2>&1
-require_contains "$TERMINAL_LOG" "received auth.result"
-require_contains "$TERMINAL_LOG" "accepted: true"
-require_contains "$TERMINAL_LOG" "received terminal.created"
-require_contains "$TERMINAL_LOG" "__REMOTEPAD_READY__"
-require_contains "$TERMINAL_LOG" "received terminal.closed"
+log "creating a persistent authenticated terminal"
+swift run remotepad-dev-client "$AGENT_PORT" >"$TERMINAL_CREATE_LOG" 2>&1
+require_contains "$TERMINAL_CREATE_LOG" "received auth.result"
+require_contains "$TERMINAL_CREATE_LOG" "accepted: true"
+require_contains "$TERMINAL_CREATE_LOG" "received terminal.created"
+require_contains "$TERMINAL_CREATE_LOG" "__REMOTEPAD_READY__"
+
+log "reattaching to and explicitly closing the terminal"
+swift run remotepad-dev-client "$AGENT_PORT" --attach-first --close-after-ready >"$TERMINAL_ATTACH_LOG" 2>&1
+require_contains "$TERMINAL_ATTACH_LOG" "received terminal.list.result"
+require_contains "$TERMINAL_ATTACH_LOG" "terminals: 1"
+require_contains "$TERMINAL_ATTACH_LOG" "received terminal.attached"
+require_contains "$TERMINAL_ATTACH_LOG" "__REMOTEPAD_ATTACHED__"
+require_contains "$TERMINAL_ATTACH_LOG" "received terminal.closed"
 
 log "running unit tests"
 swift test >"$TEST_LOG" 2>&1

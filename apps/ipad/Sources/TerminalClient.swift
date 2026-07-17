@@ -2,14 +2,24 @@ import Foundation
 import Network
 import RemotePadProtocol
 
+enum TerminalStartupMode: Sendable {
+    case resumeOrCreate
+    case create
+    case attach(UUID)
+}
+
 final class TerminalClient: @unchecked Sendable {
     private let agentHost: String
     private let agentPort: UInt16
     private let identity: AppIdentity
+    private let startupMode: TerminalStartupMode
     private let queue = DispatchQueue(label: "RemotePad.iPad.TerminalClient")
     private let decoder = FrameStreamDecoder()
     private let onStatus: @Sendable (String) -> Void
     private let onOutput: @Sendable (Data) -> Void
+    private let onSessions: @Sendable ([TerminalListItem]) -> Void
+    private let onActiveTerminal: @Sendable (UUID) -> Void
+    private let onDisconnected: @Sendable () -> Void
 
     private var connection: NWConnection?
     private var clientNonce: Data?
@@ -17,21 +27,33 @@ final class TerminalClient: @unchecked Sendable {
     private var serverNonce: Data?
     private var terminalID: UUID?
     private var didSendAuthProof = false
-    private var didCreateTerminal = false
+    private var didRunStartupAction = false
+    private var shouldRecoverFromMissingTerminal = false
+    private var isAuthenticated = false
     private var isClosed = false
+    private var didNotifyDisconnected = false
+    private var nextRequestID: UInt32 = 3
 
     init(
         agentHost: String,
         agentPort: UInt16,
         identity: AppIdentity,
+        startupMode: TerminalStartupMode = .resumeOrCreate,
         onStatus: @escaping @Sendable (String) -> Void,
-        onOutput: @escaping @Sendable (Data) -> Void
+        onOutput: @escaping @Sendable (Data) -> Void,
+        onSessions: @escaping @Sendable ([TerminalListItem]) -> Void,
+        onActiveTerminal: @escaping @Sendable (UUID) -> Void,
+        onDisconnected: @escaping @Sendable () -> Void
     ) {
         self.agentHost = agentHost
         self.agentPort = agentPort
         self.identity = identity
+        self.startupMode = startupMode
         self.onStatus = onStatus
         self.onOutput = onOutput
+        self.onSessions = onSessions
+        self.onActiveTerminal = onActiveTerminal
+        self.onDisconnected = onDisconnected
     }
 
     func connect() {
@@ -61,7 +83,7 @@ final class TerminalClient: @unchecked Sendable {
                 TerminalInput(terminalID: terminalID),
                 type: .data,
                 channelID: 2,
-                requestID: 4,
+                requestID: self.takeRequestID(),
                 payload: data
             )
         }
@@ -76,14 +98,34 @@ final class TerminalClient: @unchecked Sendable {
                 TerminalResize(terminalID: terminalID, cols: safeCols, rows: safeRows),
                 type: .request,
                 channelID: 2,
-                requestID: 6
+                requestID: self.takeRequestID()
             )
         }
     }
 
-    func close() {
+    func refreshSessions() {
         queue.async { [weak self] in
-            self?.closeOnQueue(sendTerminalClose: true)
+            guard let self, self.isAuthenticated else { return }
+            self.sendTerminalList()
+        }
+    }
+
+    /// Disconnects the transport while leaving the Mac PTY running for later attachment.
+    func disconnect() {
+        queue.async { [weak self] in
+            self?.cancelConnection()
+        }
+    }
+
+    /// Explicitly closes the active Mac PTY and then disconnects the transport.
+    func terminate() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard let terminalID = self.terminalID else {
+                self.cancelConnection()
+                return
+            }
+            self.sendTerminalCloseAndCancel(terminalID: terminalID)
         }
     }
 
@@ -95,9 +137,9 @@ final class TerminalClient: @unchecked Sendable {
             receive()
         case .failed(let error):
             onStatus("Connection failed: \(error)")
-            closeOnQueue(sendTerminalClose: false)
+            cancelConnection()
         case .cancelled:
-            onStatus("Disconnected")
+            notifyDisconnected()
         default:
             break
         }
@@ -123,7 +165,7 @@ final class TerminalClient: @unchecked Sendable {
             guard let self else { return }
             if let error {
                 self.onStatus("Receive failed: \(error)")
-                self.closeOnQueue(sendTerminalClose: false)
+                self.cancelConnection()
                 return
             }
 
@@ -135,13 +177,13 @@ final class TerminalClient: @unchecked Sendable {
                     }
                 } catch {
                     self.onStatus("Protocol error: \(error)")
-                    self.closeOnQueue(sendTerminalClose: false)
+                    self.cancelConnection()
                     return
                 }
             }
 
             if isComplete {
-                self.closeOnQueue(sendTerminalClose: false)
+                self.cancelConnection()
             } else if !self.isClosed {
                 self.receive()
             }
@@ -160,25 +202,52 @@ final class TerminalClient: @unchecked Sendable {
             let result = try FrameCodec.decodeHeader(AuthResult.self, from: frame)
             guard result.accepted else {
                 onStatus("Auth rejected: \(result.reason ?? "unknown")")
-                closeOnQueue(sendTerminalClose: false)
+                cancelConnection()
                 return
             }
+            isAuthenticated = true
             onStatus("Authenticated")
-            createTerminal()
+            runStartupAction()
+        case "terminal.list.result":
+            let result = try FrameCodec.decodeHeader(TerminalListResult.self, from: frame)
+            onSessions(result.terminals)
+            if shouldRecoverFromMissingTerminal || shouldResumeOrCreate {
+                shouldRecoverFromMissingTerminal = false
+                didRunStartupAction = true
+                resumeOrCreate(from: result.terminals)
+            }
         case "terminal.created":
             let created = try FrameCodec.decodeHeader(TerminalCreated.self, from: frame)
             terminalID = created.terminalID
+            onActiveTerminal(created.terminalID)
             onStatus("Terminal ready")
+            sendTerminalList()
+        case "terminal.attached":
+            let attached = try FrameCodec.decodeHeader(TerminalAttached.self, from: frame)
+            terminalID = attached.terminal.terminalID
+            onActiveTerminal(attached.terminal.terminalID)
+            onStatus("Terminal resumed")
         case "terminal.output":
-            onOutput(frame.payload)
+            let output = try FrameCodec.decodeHeader(TerminalOutput.self, from: frame)
+            if terminalID == nil || terminalID == output.terminalID {
+                onOutput(frame.payload)
+            }
         case "terminal.closed":
             let closed = try FrameCodec.decodeHeader(TerminalClosed.self, from: frame)
             onStatus("Terminal closed: \(closed.reason ?? "closed")")
-            closeOnQueue(sendTerminalClose: false)
+            terminalID = nil
+            cancelConnection()
         case "error":
             let error = try FrameCodec.decodeHeader(ProtocolErrorMessage.self, from: frame)
+            if error.code == "terminal_not_found" {
+                terminalID = nil
+                shouldRecoverFromMissingTerminal = true
+                onStatus("Terminal ended; finding another session")
+                sendTerminalList()
+                return
+            }
             onStatus("Remote error: \(error.code)")
-            closeOnQueue(sendTerminalClose: false)
+            cancelConnection()
         default:
             break
         }
@@ -204,10 +273,45 @@ final class TerminalClient: @unchecked Sendable {
         )
     }
 
-    private func createTerminal() {
-        guard !didCreateTerminal else { return }
-        didCreateTerminal = true
+    private func runStartupAction() {
+        switch startupMode {
+        case .resumeOrCreate:
+            sendTerminalList()
+        case .create:
+            didRunStartupAction = true
+            createTerminal()
+        case .attach(let terminalID):
+            didRunStartupAction = true
+            attachTerminal(terminalID)
+        }
+    }
 
+    private func sendTerminalList() {
+        sendToAgent(
+            TerminalList(),
+            type: .request,
+            channelID: 2,
+            requestID: takeRequestID()
+        )
+    }
+
+    private var shouldResumeOrCreate: Bool {
+        guard !didRunStartupAction else { return false }
+        if case .resumeOrCreate = startupMode { return true }
+        return false
+    }
+
+    private func resumeOrCreate(from terminals: [TerminalListItem]) {
+        if let terminal = terminals
+            .filter({ $0.state == .running })
+            .max(by: { $0.lastActiveAt < $1.lastActiveAt }) {
+            attachTerminal(terminal.terminalID)
+        } else {
+            createTerminal()
+        }
+    }
+
+    private func createTerminal() {
         sendToAgent(
             TerminalCreate(
                 shell: "/bin/zsh",
@@ -217,19 +321,17 @@ final class TerminalClient: @unchecked Sendable {
             ),
             type: .request,
             channelID: 2,
-            requestID: 3
+            requestID: takeRequestID()
         )
     }
 
-    private func closeOnQueue(sendTerminalClose: Bool) {
-        guard !isClosed else { return }
-
-        if sendTerminalClose, let terminalID {
-            sendTerminalCloseAndCancel(terminalID: terminalID)
-            return
-        }
-
-        cancelConnection()
+    private func attachTerminal(_ terminalID: UUID) {
+        sendToAgent(
+            TerminalAttach(terminalID: terminalID),
+            type: .request,
+            channelID: 2,
+            requestID: takeRequestID()
+        )
     }
 
     private func sendTerminalCloseAndCancel(terminalID: UUID) {
@@ -243,12 +345,13 @@ final class TerminalClient: @unchecked Sendable {
                 TerminalClose(terminalID: terminalID),
                 type: .request,
                 channelID: 2,
-                requestID: 5
+                requestID: takeRequestID()
             )
             isClosed = true
             connection.send(content: data, completion: .contentProcessed { [weak self] _ in
                 self?.connection?.cancel()
                 self?.connection = nil
+                self?.notifyDisconnected()
             })
         } catch {
             onStatus("Encode failed: \(error)")
@@ -257,9 +360,25 @@ final class TerminalClient: @unchecked Sendable {
     }
 
     private func cancelConnection() {
+        guard !isClosed else {
+            notifyDisconnected()
+            return
+        }
         isClosed = true
         connection?.cancel()
         connection = nil
+        notifyDisconnected()
+    }
+
+    private func notifyDisconnected() {
+        guard !didNotifyDisconnected else { return }
+        didNotifyDisconnected = true
+        onDisconnected()
+    }
+
+    private func takeRequestID() -> UInt32 {
+        defer { nextRequestID &+= 1 }
+        return nextRequestID
     }
 
     private func sendToAgent<Header: Encodable>(
@@ -281,12 +400,12 @@ final class TerminalClient: @unchecked Sendable {
             connection.send(content: data, completion: .contentProcessed { [weak self] error in
                 if let error {
                     self?.onStatus("Send failed: \(error)")
-                    self?.closeOnQueue(sendTerminalClose: false)
+                    self?.cancelConnection()
                 }
             })
         } catch {
             onStatus("Encode failed: \(error)")
-            closeOnQueue(sendTerminalClose: false)
+            cancelConnection()
         }
     }
 }

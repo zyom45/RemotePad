@@ -1,4 +1,5 @@
 import Foundation
+import RemotePadProtocol
 import UIKit
 
 @MainActor
@@ -18,11 +19,17 @@ final class RemotePadModel: ObservableObject {
     @Published var terminalInput = ""
     @Published var isTerminalConnected = false
     @Published var terminalRenderTick = 0
+    @Published var terminalSessions: [TerminalListItem] = []
+    @Published var activeTerminalID: UUID?
 
     private var proxy: LocalBrowserProxy?
     private var terminalClient: TerminalClient?
     private var terminalBuffer = TerminalTextBuffer()
     private var terminalOutputChunks: [Data] = []
+    private var shouldMaintainTerminalConnection = false
+    private var terminalConnectionGeneration = UUID()
+    private var reconnectAttempt = 0
+    private var reconnectTask: Task<Void, Never>?
 
     var browserURL: URL? {
         guard let port = UInt16(localPort) else { return nil }
@@ -123,32 +130,109 @@ final class RemotePadModel: ObservableObject {
     }
 
     func connectTerminal() {
+        shouldMaintainTerminalConnection = true
+        reconnectAttempt = 0
+        startTerminalClient(mode: .resumeOrCreate, clearOutput: true)
+    }
+
+    func createTerminalSession() {
+        shouldMaintainTerminalConnection = true
+        reconnectAttempt = 0
+        activeTerminalID = nil
+        startTerminalClient(mode: .create, clearOutput: true)
+    }
+
+    func attachTerminalSession(_ terminal: TerminalListItem) {
+        shouldMaintainTerminalConnection = true
+        reconnectAttempt = 0
+        activeTerminalID = terminal.terminalID
+        startTerminalClient(mode: .attach(terminal.terminalID), clearOutput: true)
+    }
+
+    func refreshTerminalSessions() {
+        terminalClient?.refreshSessions()
+    }
+
+    func disconnectTerminal() {
+        shouldMaintainTerminalConnection = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        terminalConnectionGeneration = UUID()
+        terminalClient?.disconnect()
+        terminalClient = nil
+        isTerminalConnected = false
+        terminalStatus = "Disconnected (session kept on Mac)"
+    }
+
+    func terminateTerminalSession() {
+        shouldMaintainTerminalConnection = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        terminalConnectionGeneration = UUID()
+        terminalClient?.terminate()
+        terminalClient = nil
+        if let activeTerminalID {
+            terminalSessions.removeAll { $0.terminalID == activeTerminalID }
+        }
+        activeTerminalID = nil
+        isTerminalConnected = false
+        terminalStatus = "Session ended"
+    }
+
+    private func startTerminalClient(mode: TerminalStartupMode, clearOutput: Bool) {
         guard let agentPort = UInt16(agentPort) else {
             terminalStatus = "Invalid agent port"
             return
         }
 
-        terminalClient?.close()
-        terminalBuffer.clear()
-        terminalOutput = ""
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        terminalClient?.disconnect()
+        if clearOutput {
+            clearTerminalForConnection()
+        }
         terminalStatus = "Connecting"
-        isTerminalConnected = true
+        isTerminalConnected = false
+        let generation = UUID()
+        terminalConnectionGeneration = generation
 
         let client = TerminalClient(
             agentHost: agentHost,
             agentPort: agentPort,
             identity: identity,
+            startupMode: mode,
             onStatus: { [weak self] status in
                 Task { @MainActor in
-                    self?.terminalStatus = status
-                    if status.hasPrefix("Disconnected") || status.hasPrefix("Connection failed") || status.hasPrefix("Auth rejected") || status.hasPrefix("Terminal closed") {
-                        self?.isTerminalConnected = false
-                    }
+                    guard let self, self.terminalConnectionGeneration == generation else { return }
+                    self.terminalStatus = status
                 }
             },
             onOutput: { [weak self] output in
                 Task { @MainActor in
-                    self?.appendTerminalOutput(output)
+                    guard let self, self.terminalConnectionGeneration == generation else { return }
+                    self.appendTerminalOutput(output)
+                }
+            },
+            onSessions: { [weak self] sessions in
+                Task { @MainActor in
+                    guard let self, self.terminalConnectionGeneration == generation else { return }
+                    self.terminalSessions = sessions.sorted { $0.lastActiveAt > $1.lastActiveAt }
+                }
+            },
+            onActiveTerminal: { [weak self] terminalID in
+                Task { @MainActor in
+                    guard let self, self.terminalConnectionGeneration == generation else { return }
+                    self.activeTerminalID = terminalID
+                    self.isTerminalConnected = true
+                    self.reconnectAttempt = 0
+                }
+            },
+            onDisconnected: { [weak self] in
+                Task { @MainActor in
+                    guard let self, self.terminalConnectionGeneration == generation else { return }
+                    self.isTerminalConnected = false
+                    self.terminalClient = nil
+                    self.scheduleTerminalReconnect()
                 }
             }
         )
@@ -156,11 +240,21 @@ final class RemotePadModel: ObservableObject {
         client.connect()
     }
 
-    func disconnectTerminal() {
-        terminalClient?.close()
-        terminalClient = nil
-        isTerminalConnected = false
-        terminalStatus = "Disconnected"
+    private func scheduleTerminalReconnect() {
+        guard shouldMaintainTerminalConnection else { return }
+        reconnectAttempt += 1
+        let delay = min(10, 1 << min(reconnectAttempt - 1, 3))
+        terminalStatus = "Reconnecting in \(delay)s"
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.shouldMaintainTerminalConnection else { return }
+                let mode = self.activeTerminalID.map(TerminalStartupMode.attach) ?? .resumeOrCreate
+                self.startTerminalClient(mode: mode, clearOutput: false)
+            }
+        }
     }
 
     func sendTerminalInput() {
@@ -191,6 +285,13 @@ final class RemotePadModel: ObservableObject {
     }
 
     func clearTerminalOutput() {
+        terminalBuffer.clear()
+        terminalOutputChunks = [Data("\u{1B}c".utf8)]
+        terminalRenderTick += 1
+        terminalOutput = ""
+    }
+
+    private func clearTerminalForConnection() {
         terminalBuffer.clear()
         terminalOutputChunks = [Data("\u{1B}c".utf8)]
         terminalRenderTick += 1

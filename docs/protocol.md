@@ -597,6 +597,21 @@ internal_error
 10. BrowserProxy WebSocket
 11. Dev server list
 
+## Terminal 再接続とセッション再開
+
+ローカル MVP の Terminal は、ネットワーク接続と Mac 上の PTY の寿命を分離します。iPad が切断しても PTY は Agent 内で動作を続け、明示的な `terminal.close` またはシェル終了時にだけ破棄されます。
+
+再開フロー:
+
+1. iPad は通常の `client.hello` / `server.hello` / `auth.proof` で毎回再認証する。
+2. 認証後に `terminal.list` を送り、実行中の PTY 一覧を取得する。
+3. 前回の `terminal_id` が存在すれば `terminal.attach`、存在しなければ最終操作時刻が最も新しい PTYへ attach する。
+4. 実行中の PTY がなければ `terminal.create` で新規作成する。
+5. Agent は `terminal.attached` の後、最大 512 KiB の直近出力を `terminal.output` として再送する。
+6. 回線断時は iPad が 1、2、4、8、最大10秒のバックオフで再接続し、同じ認証と attach を繰り返す。
+
+MVP では resume token を採用しません。デバイス鍵による再認証を必須にすることで、切断済みセッション情報だけを持つ第三者が再開できないようにします。Relay 導入時はトランスポート接続IDとRemotePadセッションIDを分離し、必要性を確認してから短寿命 resume token を追加します。
+
 ## 未決定事項
 
 - TLS 証明書を自己署名 + pinning にするか、Noise Protocol 系に寄せるか。

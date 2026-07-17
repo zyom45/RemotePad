@@ -203,17 +203,66 @@ private struct TerminalWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 8) {
                 Text(model.terminalStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer()
-                Button("Clear") {
+
+                Menu {
+                    Button {
+                        model.createTerminalSession()
+                    } label: {
+                        Label("New Session", systemImage: "plus")
+                    }
+
+                    Button {
+                        model.refreshTerminalSessions()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(!model.isTerminalConnected)
+
+                    if !model.terminalSessions.isEmpty {
+                        Divider()
+                        ForEach(model.terminalSessions, id: \.terminalID) { terminal in
+                            Button {
+                                model.attachTerminalSession(terminal)
+                            } label: {
+                                if terminal.terminalID == model.activeTerminalID {
+                                    Label(terminal.title, systemImage: "checkmark")
+                                } else {
+                                    Text(terminal.title)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Sessions", systemImage: "rectangle.stack")
+                }
+
+                Button {
                     model.clearTerminalOutput()
+                } label: {
+                    Image(systemName: "eraser")
                 }
-                Button(model.isTerminalConnected ? "Disconnect" : "Connect") {
+                .help("Clear terminal")
+
+                Button {
                     model.isTerminalConnected ? model.disconnectTerminal() : model.connectTerminal()
+                } label: {
+                    Image(systemName: model.isTerminalConnected ? "pause.fill" : "play.fill")
                 }
+                .help(model.isTerminalConnected ? "Disconnect and keep session" : "Connect")
+
+                Button(role: .destructive) {
+                    model.terminateTerminalSession()
+                } label: {
+                    Image(systemName: "xmark.circle")
+                }
+                .disabled(model.activeTerminalID == nil)
+                .help("End session on Mac")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -223,7 +272,7 @@ private struct TerminalWorkspaceView: View {
             RemotePadTerminalView(renderTick: model.terminalRenderTick)
                 .overlay {
                     if model.terminalOutput.isEmpty && !model.isTerminalConnected {
-                        ContentUnavailableView("Terminal Disconnected", systemImage: "terminal", description: Text("Connect to start a Mac terminal."))
+                        ContentUnavailableView("Terminal Disconnected", systemImage: "terminal", description: Text("Connect to resume a Mac terminal."))
                     }
                 }
 

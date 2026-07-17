@@ -1,6 +1,6 @@
 # RemotePad Progress
 
-Last updated: 2026-06-29
+Last updated: 2026-07-17
 
 This document tracks implementation progress against the product goal:
 an iPad-first remote development client for a continuously running Mac.
@@ -17,7 +17,7 @@ The most important vertical path is now proven:
 4. The approved device can authenticate.
 5. The authenticated device can create and use a Mac PTY terminal.
 
-This proves the core protocol, pairing, authentication, and terminal execution path. The product is not yet usable as a daily iPad app.
+This proves the core protocol, pairing, authentication, persistent terminal, and localhost browser execution path. The local MVP is ready for installation and real-device validation; remote access and screen control remain later milestones.
 
 ## Implemented
 
@@ -95,6 +95,10 @@ REMOTEPAD_AGENT_PORT=53244 swift run remotepad-agent
 - SwiftTerm-backed terminal rendering.
 - Terminal resize propagation.
 - Terminal input via SwiftTerm keyboard handling.
+- Running terminal session picker.
+- Create, attach, disconnect-with-session-preserved, and explicit session termination actions.
+- Automatic resume of the most recently active terminal.
+- Automatic reconnect with bounded exponential backoff.
 - WebView scaffold.
 - Local browser proxy scaffold.
 
@@ -134,7 +138,8 @@ REMOTEPAD_OPEN_PAIRING_APPROVER=0 REMOTEPAD_AGENT_PORT=<port> swift run remotepa
 swift run remotepad-dev-client --pair <agent-port> "RemotePad Dev iPad"
 swift run remotepad-agent --approve-pairing <device-id>
 swift run remotepad-dev-client --pair-status <agent-port>
-swift run remotepad-dev-client <agent-port> --close-after-ready
+swift run remotepad-dev-client <agent-port>
+swift run remotepad-dev-client <agent-port> --attach-first --close-after-ready
 swift run remotepad-agent --revoke-device <device-id>
 swift test
 ```
@@ -144,9 +149,10 @@ Observed results:
 - Pairing request returned `pending_approval`.
 - Approval moved the device into the trusted store.
 - Pairing status returned `approved`.
-- Authenticated terminal session was created.
+- Authenticated terminal session was created and left running after transport disconnect.
+- A second connection listed and attached to the existing terminal.
 - Terminal printed `__REMOTEPAD_READY__`.
-- Terminal closed cleanly.
+- Reattached terminal printed `__REMOTEPAD_ATTACHED__` and closed cleanly on explicit request.
 - Verification device was revoked after the test.
 - `swift test` passed with 34 tests.
 
@@ -154,11 +160,8 @@ Observed results:
 
 ### iPad Daily-Use Terminal
 
-- Terminal emulator UI with ANSI rendering.
-- Keyboard input polish.
-- External keyboard shortcuts.
-- Resize handling from the iPad UI.
-- Session picker and reconnection UI.
+- Additional external keyboard shortcuts.
+- Terminal title and working-directory polish.
 
 ### iPad Daily-Use Browser
 
@@ -208,7 +211,7 @@ Approximate status:
 
 - Secure local pairing and authentication foundation: 40%
 - Terminal backend: 50%
-- iPad terminal product experience: 35%
+- iPad terminal product experience: 70%
 - Mac localhost browser backend: 35%
 - iPad browser product experience: 30%
 - Mac agent product experience: 25%
@@ -217,15 +220,16 @@ Approximate status:
 - Audio: 0%
 - Codex / Claude specialized workflow: 10%
 
-Overall product progress: roughly 25-30%.
+Local MVP progress: roughly 75%.
+
+Overall long-term product progress: roughly 30%.
 
 ## Next Recommended Work
 
-1. Validate iPad Browser WebView behavior for WebSocket, HMR, SSE, cookies, and origin handling.
-2. Improve iPad terminal session picker and reconnect behavior.
-3. Move Mac agent into a menu bar app with pairing status and approvals.
-4. Define the production security model before enabling LAN exposure.
-5. Add Keychain storage for identities and trusted keys.
+1. Validate iPad Browser WebView behavior for WebSocket, HMR, SSE, cookies, and origin handling on hardware.
+2. Move Mac agent into a menu bar app with pairing status and approvals.
+3. Define the production security model before enabling LAN exposure.
+4. Add Keychain storage for identities and trusted keys.
 
 ## Documentation Map
 
