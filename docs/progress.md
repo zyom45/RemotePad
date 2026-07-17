@@ -37,6 +37,11 @@ This proves the core protocol, pairing, authentication, persistent terminal, and
 - Optional Bonjour service model in the codebase, disabled by default.
 - Agent device identity.
 - Signed nonce authentication for trusted devices.
+- Keychain-backed Mac and iPad signing identities with legacy migration.
+- Signed ephemeral X25519 handshake.
+- HKDF-SHA256 directional session keys.
+- ChaCha20-Poly1305 encrypted application frames with replay counters.
+- Explicit `--lan` / Bonjour exposure gate with loopback-only default.
 - Trusted device store.
 - Pending pairing request store.
 - CLI tools for listing, approving, rejecting, trusting, revoking, and clearing devices.
@@ -171,12 +176,9 @@ Observed results:
 
 ### Production Security
 
-- Keychain storage for device identities and trusted keys.
-- Application-layer E2E encryption after pairing.
-- Threat model document.
-- Audit log.
 - User-visible permission policy.
-- LAN exposure gate after UI pairing and revocation are complete.
+- Pairing and trusted-device public-key records still need Keychain integrity protection.
+- Pairing rate limits and short authentication string confirmation.
 
 ### Mac App Experience
 
@@ -209,7 +211,7 @@ Observed results:
 
 Approximate status:
 
-- Secure local pairing and authentication foundation: 40%
+- Secure local pairing and authentication foundation: 75%
 - Terminal backend: 50%
 - iPad terminal product experience: 70%
 - Mac localhost browser backend: 35%
@@ -220,7 +222,7 @@ Approximate status:
 - Audio: 0%
 - Codex / Claude specialized workflow: 10%
 
-Local MVP progress: roughly 75%.
+Local MVP progress: roughly 90%.
 
 Overall long-term product progress: roughly 30%.
 
@@ -237,4 +239,5 @@ Overall long-term product progress: roughly 30%.
 - [MVP](mvp.md): MVP scope and prioritization.
 - [Technical Selection](technical-selection.md): implementation choices.
 - [Protocol](protocol.md): wire protocol details.
+- [Security](security.md): trust boundaries, controls, residual risks, and release gates.
 - This file: implementation status and verification history.

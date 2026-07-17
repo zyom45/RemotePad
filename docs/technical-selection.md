@@ -41,7 +41,7 @@ Terminal は通常 SSH ではなく、Mac Agent が PTY を起動し、RemotePad
 方式:
 
 - Bonjour / mDNS で Mac Agent を検出。
-- TLS とデバイス鍵で認証済みセッションを確立。
+- 署名済みX25519鍵交換とChaCha20-Poly1305によるE2Eセッションを確立。
 - iPad と Mac の鍵は Keychain に保存。
 - 初回ペアリングは Mac 側承認を必須にする。
 
@@ -51,9 +51,11 @@ Terminal は通常 SSH ではなく、Mac Agent が PTY を起動し、RemotePad
 
 - 署名チャレンジ検証は実装済み。
 - ペアリング要求、Mac 側承認、デバイス失効の基礎は実装済み。
-- Keychain 保存、E2E 暗号、監査ログ、LAN 公開時の安全ゲートが未完成の間は、Mac Agent は `127.0.0.1` のみに待ち受ける。
-- Keychain 保存、E2E 暗号、監査ログ、LAN 公開時の安全ゲートが未完成の間は、Bonjour / mDNS を公開しない。
-- LAN 直結は、ペアリング済み公開鍵による署名チャレンジ、失効フロー、監査ログ、明示的な公開設定が入った後に有効化する。
+- デバイス秘密鍵はKeychainへ保存し、既存UserDefaults鍵は初回起動時に移行する。
+- 認証後の全フレームは一時X25519鍵、HKDF-SHA256、ChaCha20-Poly1305でE2E暗号化する。
+- Macの長期署名鍵で一時鍵を含むhandshake transcriptへ署名し、iPadはペアリング時にpinしたMac公開鍵で検証する。
+- LAN / Bonjour公開は既定で無効とし、`--lan` または `REMOTEPAD_ENABLE_LAN=1` の明示指定時だけ有効にする。
+- LANモードは固定ポート `53241` を既定とし、`REMOTEPAD_AGENT_PORT` で上書きできる。
 
 ### 4. 外出先接続は VPN 内蔵より E2E Relay 優先
 
@@ -209,13 +211,9 @@ RemotePad/
 未実装:
 
 - `packages/RemotePadCore/`
-- Keychain 保存
-- E2E 暗号
-- 監査ログ
 - Mac メニューバー常駐
 - LAN Discovery
-- 実用的な iPad Terminal UI
-- 実用的な iPad WebView / local listener UI
+- 実iPadでのWebView互換性検証
 - E2E Relay
 
 推奨構成は維持しますが、実装は Mac Agent、共有Protocol、開発用CLIから開始しています。
@@ -234,8 +232,6 @@ RemotePad/
 
 ## 保留事項
 
-- TLS 証明書、Noise、デバイス鍵の具体的な形式。
-- Swift の PTY 実装方式。
-- iPad 側 Terminal コンポーネントの最終選定。
+- Relay transportをWebSocket、QUIC、WebRTC DataChannelのどれにするか。
 - WebView と Safari 連携の具体仕様。
 - Relay サーバーの実装言語と運用方式。

@@ -14,6 +14,10 @@ TEST_LOG="$LOG_DIR/test.log"
 AGENT_PID=""
 DEVICE_ID=""
 
+export REMOTEPAD_AGENT_IDENTITY_FILE="$LOG_DIR/agent-identity.json"
+export REMOTEPAD_DEV_CLIENT_IDENTITY_FILE="$LOG_DIR/dev-client-identity.json"
+export REMOTEPAD_AUDIT_LOG_FILE="$LOG_DIR/audit.jsonl"
+
 log() {
   printf '[check-local-integration] %s\n' "$*"
 }
@@ -147,5 +151,12 @@ log "running unit tests"
 swift test >"$TEST_LOG" 2>&1
 require_contains "$TEST_LOG" "Test run with"
 require_contains "$TEST_LOG" "tests in 0 suites passed"
+
+log "checking audit events"
+require_contains "$REMOTEPAD_AUDIT_LOG_FILE" '"event":"pairing.approved"'
+require_contains "$REMOTEPAD_AUDIT_LOG_FILE" '"event":"auth.accepted"'
+require_contains "$REMOTEPAD_AUDIT_LOG_FILE" '"event":"terminal.created"'
+require_contains "$REMOTEPAD_AUDIT_LOG_FILE" '"event":"terminal.attached"'
+require_contains "$REMOTEPAD_AUDIT_LOG_FILE" '"event":"terminal.closed"'
 
 log "passed"

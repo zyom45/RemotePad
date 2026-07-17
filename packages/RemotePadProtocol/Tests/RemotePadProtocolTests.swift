@@ -3,7 +3,7 @@ import Foundation
 @testable import RemotePadProtocol
 
 @Test func exposesCurrentVersion() {
-    #expect(RemotePadProtocol.currentVersion == 1)
+    #expect(RemotePadProtocol.currentVersion == 2)
 }
 
 @Test func encodesAndDecodesFrame() throws {

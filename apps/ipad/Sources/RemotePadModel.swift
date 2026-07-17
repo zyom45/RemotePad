@@ -100,6 +100,9 @@ final class RemotePadModel: ObservableObject {
         Task {
             do {
                 let result = try await client.run()
+                if let macDeviceID = result.macDeviceID, let macPublicKey = result.macPublicKey {
+                    try identity.pinMac(deviceID: macDeviceID, publicKey: macPublicKey)
+                }
                 pairingStatus = "\(result.status): \(result.deviceID.uuidString)"
             } catch {
                 pairingStatus = "Failed: \(error)"

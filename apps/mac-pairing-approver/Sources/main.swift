@@ -33,6 +33,7 @@ final class PairingApprovalModel: ObservableObject {
 
     private let pendingStore = PendingPairingRequestStore()
     private let trustedStore = TrustedDeviceStore()
+    private let auditLogger = try? AuditLogger()
 
     init() {
         refresh()
@@ -46,18 +47,21 @@ final class PairingApprovalModel: ObservableObject {
     func approve(_ identity: DeviceIdentity) {
         trustedStore.trust(publicKey: identity.publicKey, for: identity.deviceID)
         pendingStore.remove(deviceID: identity.deviceID)
+        auditLogger?.record(AuditEvent(event: "pairing.approved", deviceID: identity.deviceID, details: ["source": "app"]))
         status = "Approved \(identity.deviceName)"
         refresh()
     }
 
     func reject(_ identity: DeviceIdentity) {
         pendingStore.remove(deviceID: identity.deviceID)
+        auditLogger?.record(AuditEvent(event: "pairing.rejected", deviceID: identity.deviceID, details: ["source": "app"]))
         status = "Rejected \(identity.deviceName)"
         refresh()
     }
 
     func revoke(_ entry: TrustedDeviceStore.Entry) {
         trustedStore.revoke(deviceID: entry.deviceID)
+        auditLogger?.record(AuditEvent(event: "device.revoked", deviceID: entry.deviceID, details: ["source": "app"]))
         status = "Revoked \(entry.deviceID.uuidString)"
         refresh()
     }

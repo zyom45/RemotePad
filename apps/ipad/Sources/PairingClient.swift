@@ -6,6 +6,8 @@ struct PairingClientResult: Sendable {
     var status: String
     var deviceID: UUID
     var reason: String?
+    var macDeviceID: UUID?
+    var macPublicKey: Data?
 }
 
 final class PairingClient: @unchecked Sendable {
@@ -20,6 +22,7 @@ final class PairingClient: @unchecked Sendable {
     private var pairingIdentity: DeviceIdentity?
     private var macDeviceID: UUID?
     private var challenge: Data?
+    private var macPublicKey: Data?
     private var continuation: CheckedContinuation<PairingClientResult, Error>?
 
     init(agentHost: String, agentPort: UInt16, identity: AppIdentity, deviceName: String) {
@@ -105,10 +108,17 @@ final class PairingClient: @unchecked Sendable {
             let message = try FrameCodec.decodeHeader(PairingChallenge.self, from: frame)
             challenge = message.challenge
             macDeviceID = message.macIdentity.deviceID
+            macPublicKey = message.macIdentity.publicKey
             sendPairingResponse()
         case "pairing.result":
             let result = try FrameCodec.decodeHeader(PairingResult.self, from: frame)
-            finish(returning: PairingClientResult(status: result.status, deviceID: result.deviceID, reason: result.reason))
+            finish(returning: PairingClientResult(
+                status: result.status,
+                deviceID: result.deviceID,
+                reason: result.reason,
+                macDeviceID: macDeviceID,
+                macPublicKey: macPublicKey
+            ))
         case "error":
             let error = try FrameCodec.decodeHeader(ProtocolErrorMessage.self, from: frame)
             finish(throwing: PairingClientError.remote(error.code))
@@ -118,7 +128,7 @@ final class PairingClient: @unchecked Sendable {
     }
 
     private func sendPairingResponse() {
-        guard let pairingIdentity, let macDeviceID, let challenge else {
+        guard let pairingIdentity, let macDeviceID, let macPublicKey, let challenge else {
             finish(throwing: PairingClientError.missingChallenge)
             return
         }
@@ -126,7 +136,8 @@ final class PairingClient: @unchecked Sendable {
         let transcript = PairingTranscript.make(
             challenge: challenge,
             ipadIdentity: pairingIdentity,
-            macDeviceID: macDeviceID
+            macDeviceID: macDeviceID,
+            macPublicKey: macPublicKey
         )
         send(
             PairingResponse(signature: identity.sign(transcript)),
@@ -252,7 +263,13 @@ final class PairingStatusClient: @unchecked Sendable {
                         let header = try FrameCodec.decodeHeader(MessageHeader.self, from: frame)
                         if header.kind == "pairing.result" {
                             let result = try FrameCodec.decodeHeader(PairingResult.self, from: frame)
-                            self.finish(returning: PairingClientResult(status: result.status, deviceID: result.deviceID, reason: result.reason))
+                            self.finish(returning: PairingClientResult(
+                                status: result.status,
+                                deviceID: result.deviceID,
+                                reason: result.reason,
+                                macDeviceID: nil,
+                                macPublicKey: nil
+                            ))
                             return
                         }
                     }

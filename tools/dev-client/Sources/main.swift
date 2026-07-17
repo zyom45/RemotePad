@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import Network
 import RemotePadProtocol
+import RemotePadSecurity
 
 @main
 struct RemotePadDevClientCommand {
@@ -185,10 +186,14 @@ final class DevClient: @unchecked Sendable {
     private let identity: DevClientIdentity
     private let decoder = FrameStreamDecoder()
     private let queue = DispatchQueue(label: "RemotePadDevClient")
+    private let keyExchange = SessionKeyExchange()
     private var connection: NWConnection?
     private var clientNonce: Data?
     private var serverDeviceID: UUID?
     private var serverNonce: Data?
+    private var serverKeyAgreementPublicKey: Data?
+    private var pendingSecureSession: SecureSession?
+    private var secureSession: SecureSession?
     private var didSendAuthProof = false
     private var didSendTerminalCreate = false
     private var didSendTerminalList = false
@@ -238,7 +243,8 @@ final class DevClient: @unchecked Sendable {
         let hello = ClientHello(
             deviceID: identity.deviceID,
             nonce: nonce,
-            publicKey: identity.publicKey
+            publicKey: identity.publicKey,
+            keyAgreementPublicKey: keyExchange.publicKey
         )
         do {
             let data = try FrameCodec.encodeHeader(
@@ -276,7 +282,8 @@ final class DevClient: @unchecked Sendable {
 
             do {
                 let frames = try self.decoder.append(data)
-                for frame in frames {
+                for receivedFrame in frames {
+                    let frame = try self.secureSession?.open(frame: receivedFrame) ?? receivedFrame
                     let header = try FrameCodec.decodeHeader(MessageHeader.self, from: frame)
                     if header.kind == "server.hello" {
                         let hello = try FrameCodec.decodeHeader(ServerHello.self, from: frame)
@@ -286,6 +293,21 @@ final class DevClient: @unchecked Sendable {
                         print("  capabilities: \(hello.capabilities.channels.map(\.rawValue).joined(separator: ","))")
                         self.serverDeviceID = hello.deviceID
                         self.serverNonce = hello.nonce
+                        guard self.identity.verifiesServerHello(
+                            hello,
+                            clientNonce: self.clientNonce ?? Data(),
+                            clientKeyAgreementPublicKey: self.keyExchange.publicKey
+                        ) else {
+                            throw DevPairingError.remote("untrusted_server_identity")
+                        }
+                        self.serverKeyAgreementPublicKey = hello.keyAgreementPublicKey
+                        self.pendingSecureSession = try SecureSession(
+                            privateKey: self.keyExchange.privateKey,
+                            remotePublicKey: hello.keyAgreementPublicKey,
+                            clientNonce: self.clientNonce ?? Data(),
+                            serverNonce: hello.nonce,
+                            role: .client
+                        )
                         self.sendAuthProof(on: connection)
                     } else if header.kind == "auth.result" {
                         let result = try FrameCodec.decodeHeader(AuthResult.self, from: frame)
@@ -295,6 +317,8 @@ final class DevClient: @unchecked Sendable {
                             print("  session_id: \(sessionID)")
                         }
                         if result.accepted {
+                            self.secureSession = self.pendingSecureSession
+                            self.pendingSecureSession = nil
                             switch self.mode {
                             case .create:
                                 self.sendTerminalCreate(on: connection)
@@ -417,7 +441,7 @@ final class DevClient: @unchecked Sendable {
         guard !didSendAuthProof else { return }
         didSendAuthProof = true
 
-        guard let clientNonce, let serverDeviceID, let serverNonce else {
+        guard let clientNonce, let serverDeviceID, let serverNonce, let serverKeyAgreementPublicKey else {
             print("auth proof skipped: missing challenge material")
             return
         }
@@ -426,7 +450,9 @@ final class DevClient: @unchecked Sendable {
             clientDeviceID: identity.deviceID,
             clientNonce: clientNonce,
             serverDeviceID: serverDeviceID,
-            serverNonce: serverNonce
+            serverNonce: serverNonce,
+            clientKeyAgreementPublicKey: keyExchange.publicKey,
+            serverKeyAgreementPublicKey: serverKeyAgreementPublicKey
         )
         let proof = AuthProof(signature: identity.sign(transcript))
         do {
@@ -457,7 +483,7 @@ final class DevClient: @unchecked Sendable {
             rows: 30
         )
         do {
-            let data = try FrameCodec.encodeHeader(
+            let data = try encodeSecureHeader(
                 create,
                 type: .request,
                 channelID: 2,
@@ -478,7 +504,7 @@ final class DevClient: @unchecked Sendable {
         didSendTerminalList = true
 
         do {
-            let data = try FrameCodec.encodeHeader(
+            let data = try encodeSecureHeader(
                 TerminalList(),
                 type: .request,
                 channelID: 2,
@@ -497,7 +523,7 @@ final class DevClient: @unchecked Sendable {
     private func sendTerminalInput(terminalID: UUID, text: String, on connection: NWConnection) {
         let input = TerminalInput(terminalID: terminalID)
         do {
-            let data = try FrameCodec.encodeHeader(
+            let data = try encodeSecureHeader(
                 input,
                 type: .data,
                 channelID: 2,
@@ -517,7 +543,7 @@ final class DevClient: @unchecked Sendable {
     private func sendTerminalAttach(terminalID: UUID, on connection: NWConnection) {
         let attach = TerminalAttach(terminalID: terminalID)
         do {
-            let data = try FrameCodec.encodeHeader(
+            let data = try encodeSecureHeader(
                 attach,
                 type: .request,
                 channelID: 2,
@@ -539,7 +565,7 @@ final class DevClient: @unchecked Sendable {
 
         let close = TerminalClose(terminalID: terminalID)
         do {
-            let data = try FrameCodec.encodeHeader(
+            let data = try encodeSecureHeader(
                 close,
                 type: .request,
                 channelID: 2,
@@ -575,7 +601,7 @@ final class DevClient: @unchecked Sendable {
             headers: ["Accept": "*/*"]
         )
         do {
-            let data = try FrameCodec.encodeHeader(
+            let data = try encodeSecureHeader(
                 request,
                 type: .request,
                 channelID: 3,
@@ -608,13 +634,13 @@ final class DevClient: @unchecked Sendable {
         """
 
         do {
-            let openData = try FrameCodec.encodeHeader(
+            let openData = try encodeSecureHeader(
                 open,
                 type: .request,
                 channelID: 3,
                 requestID: 9
             )
-            let streamData = try FrameCodec.encodeHeader(
+            let streamData = try encodeSecureHeader(
                 BrowserStreamData(streamID: streamID),
                 type: .data,
                 channelID: 3,
@@ -634,6 +660,26 @@ final class DevClient: @unchecked Sendable {
         } catch {
             print("browser stream encode failed: \(error)")
         }
+    }
+
+    private func encodeSecureHeader<Header: Encodable>(
+        _ header: Header,
+        type: FrameType,
+        channelID: UInt32,
+        requestID: UInt32,
+        payload: Data = Data()
+    ) throws -> Data {
+        guard let secureSession else { throw DevPairingError.remote("secure_session_required") }
+        let frame = try FrameCodec.decode(
+            FrameCodec.encodeHeader(
+                header,
+                type: type,
+                channelID: channelID,
+                requestID: requestID,
+                payload: payload
+            )
+        )
+        return try secureSession.seal(frame: frame)
     }
 
     private func finish(
@@ -708,10 +754,14 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
     private let onClose: (UUID) -> Void
     private let decoder = FrameStreamDecoder()
     private let streamID = UUID()
+    private let keyExchange = SessionKeyExchange()
 
     private var clientNonce: Data?
     private var serverDeviceID: UUID?
     private var serverNonce: Data?
+    private var serverKeyAgreementPublicKey: Data?
+    private var pendingSecureSession: SecureSession?
+    private var secureSession: SecureSession?
     private var isAuthenticated = false
     private var didOpenStream = false
     private var isClosed = false
@@ -780,7 +830,8 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
         let hello = ClientHello(
             deviceID: identity.deviceID,
             nonce: nonce,
-            publicKey: identity.publicKey
+            publicKey: identity.publicKey,
+            keyAgreementPublicKey: keyExchange.publicKey
         )
         sendToAgent(hello, type: .request, channelID: 1, requestID: 1)
     }
@@ -797,7 +848,8 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
             if let data, !data.isEmpty {
                 do {
                     let frames = try self.decoder.append(data)
-                    for frame in frames {
+                    for receivedFrame in frames {
+                        let frame = try self.secureSession?.open(frame: receivedFrame) ?? receivedFrame
                         try self.handleAgentFrame(frame)
                     }
                 } catch {
@@ -820,8 +872,24 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
         switch header.kind {
         case "server.hello":
             let hello = try FrameCodec.decodeHeader(ServerHello.self, from: frame)
+            guard let clientNonce,
+                  identity.verifiesServerHello(
+                    hello,
+                    clientNonce: clientNonce,
+                    clientKeyAgreementPublicKey: keyExchange.publicKey
+                  ) else {
+                throw DevPairingError.remote("untrusted_server_identity")
+            }
             serverDeviceID = hello.deviceID
             serverNonce = hello.nonce
+            serverKeyAgreementPublicKey = hello.keyAgreementPublicKey
+            pendingSecureSession = try SecureSession(
+                privateKey: keyExchange.privateKey,
+                remotePublicKey: hello.keyAgreementPublicKey,
+                clientNonce: clientNonce,
+                serverNonce: hello.nonce,
+                role: .client
+            )
             sendAuthProof()
         case "auth.result":
             let result = try FrameCodec.decodeHeader(AuthResult.self, from: frame)
@@ -831,6 +899,8 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
                 return
             }
             isAuthenticated = true
+            secureSession = pendingSecureSession
+            pendingSecureSession = nil
             openBrowserStream()
         case "browser.stream.data":
             _ = try FrameCodec.decodeHeader(BrowserStreamData.self, from: frame)
@@ -847,7 +917,7 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
     }
 
     private func sendAuthProof() {
-        guard let clientNonce, let serverDeviceID, let serverNonce else {
+        guard let clientNonce, let serverDeviceID, let serverNonce, let serverKeyAgreementPublicKey else {
             close()
             return
         }
@@ -856,7 +926,9 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
             clientDeviceID: identity.deviceID,
             clientNonce: clientNonce,
             serverDeviceID: serverDeviceID,
-            serverNonce: serverNonce
+            serverNonce: serverNonce,
+            clientKeyAgreementPublicKey: keyExchange.publicKey,
+            serverKeyAgreementPublicKey: serverKeyAgreementPublicKey
         )
         sendToAgent(
             AuthProof(signature: identity.sign(transcript)),
@@ -949,13 +1021,14 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
     ) {
         guard !isClosed else { return }
         do {
-            let data = try FrameCodec.encodeHeader(
+            let plaintext = try FrameCodec.decode(FrameCodec.encodeHeader(
                 header,
                 type: type,
                 channelID: channelID,
                 requestID: requestID,
                 payload: payload
-            )
+            ))
+            let data = try secureSession?.seal(frame: plaintext) ?? FrameCodec.encode(plaintext)
             agentConnection.send(content: data, completion: .contentProcessed { [weak self] error in
                 if let error {
                     print("local proxy agent send failed: \(error)")
@@ -994,6 +1067,7 @@ final class DevPairingClient: @unchecked Sendable {
     private var connection: NWConnection?
     private var pairingIdentity: DeviceIdentity?
     private var macDeviceID: UUID?
+    private var macPublicKey: Data?
     private var challenge: Data?
     private var continuation: CheckedContinuation<DevPairingResult, Error>?
 
@@ -1072,6 +1146,8 @@ final class DevPairingClient: @unchecked Sendable {
             let challenge = try FrameCodec.decodeHeader(PairingChallenge.self, from: frame)
             self.challenge = challenge.challenge
             macDeviceID = challenge.macIdentity.deviceID
+            macPublicKey = challenge.macIdentity.publicKey
+            try identity.pinMac(deviceID: challenge.macIdentity.deviceID, publicKey: challenge.macIdentity.publicKey)
             sendPairingResponse()
         case "pairing.result":
             let result = try FrameCodec.decodeHeader(PairingResult.self, from: frame)
@@ -1090,7 +1166,7 @@ final class DevPairingClient: @unchecked Sendable {
     }
 
     private func sendPairingResponse() {
-        guard let pairingIdentity, let macDeviceID, let challenge else {
+        guard let pairingIdentity, let macDeviceID, let macPublicKey, let challenge else {
             finish(throwing: DevPairingError.missingChallenge)
             return
         }
@@ -1098,7 +1174,8 @@ final class DevPairingClient: @unchecked Sendable {
         let transcript = PairingTranscript.make(
             challenge: challenge,
             ipadIdentity: pairingIdentity,
-            macDeviceID: macDeviceID
+            macDeviceID: macDeviceID,
+            macPublicKey: macPublicKey
         )
         send(
             PairingResponse(signature: identity.sign(transcript)),
@@ -1279,33 +1356,76 @@ struct DevClientIdentity {
     }
 
     static func loadOrCreate() -> DevClientIdentity {
-        let defaults = UserDefaults.standard
-        let deviceIDKey = "RemotePadDevClientDeviceID"
-        let privateKeyKey = "RemotePadDevClientPrivateKey"
-
-        if let deviceIDString = defaults.string(forKey: deviceIDKey),
-           let deviceID = UUID(uuidString: deviceIDString),
-           let privateKeyString = defaults.string(forKey: privateKeyKey),
-           let privateKeyData = Data(base64Encoded: privateKeyString),
-           let privateKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData) {
-            return DevClientIdentity(deviceID: deviceID, privateKey: privateKey)
+        do {
+            let identity: DeviceKeyIdentity
+            if let path = ProcessInfo.processInfo.environment["REMOTEPAD_DEV_CLIENT_IDENTITY_FILE"] {
+                identity = try DeviceKeyIdentity.loadOrCreate(fileURL: URL(fileURLWithPath: path))
+            } else {
+                identity = try DeviceKeyIdentity.loadOrCreate(
+                    service: "com.remotepad.dev-client.identity",
+                    legacyDefaults: .standard,
+                    legacyDeviceIDKey: "RemotePadDevClientDeviceID",
+                    legacyPrivateKeyKey: "RemotePadDevClientPrivateKey"
+                )
+            }
+            return DevClientIdentity(deviceID: identity.deviceID, privateKey: identity.privateKey)
+        } catch {
+            fatalError("Dev client could not load its Keychain identity: \(error)")
         }
-
-        let deviceID = UUID()
-        let privateKey = Curve25519.Signing.PrivateKey()
-        defaults.set(deviceID.uuidString, forKey: deviceIDKey)
-        defaults.set(privateKey.rawRepresentation.base64EncodedString(), forKey: privateKeyKey)
-        return DevClientIdentity(deviceID: deviceID, privateKey: privateKey)
     }
 
     static func reset() {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "RemotePadDevClientDeviceID")
         defaults.removeObject(forKey: "RemotePadDevClientPrivateKey")
+        try? KeychainDataStore(service: "com.remotepad.dev-client.identity")
+            .remove(account: "device-identity-v1")
     }
 
     func sign(_ data: Data) -> Data {
         (try? privateKey.signature(for: data)) ?? Data()
+    }
+
+    func pinMac(deviceID: UUID, publicKey: Data) throws {
+        guard (try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey)) != nil else {
+            throw RemotePadSecurityError.invalidIdentity
+        }
+        if let identityPath = ProcessInfo.processInfo.environment["REMOTEPAD_DEV_CLIENT_IDENTITY_FILE"] {
+            let url = URL(fileURLWithPath: identityPath + ".mac-\(deviceID.uuidString).pub")
+            try publicKey.write(to: url, options: [.atomic])
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o600))],
+                ofItemAtPath: url.path
+            )
+            return
+        }
+        try KeychainDataStore(service: "com.remotepad.dev-client.paired-macs")
+            .set(publicKey, for: deviceID.uuidString)
+    }
+
+    func verifiesServerHello(_ hello: ServerHello, clientNonce: Data, clientKeyAgreementPublicKey: Data) -> Bool {
+        let pinnedKey: Data?
+        if let identityPath = ProcessInfo.processInfo.environment["REMOTEPAD_DEV_CLIENT_IDENTITY_FILE"] {
+            let url = URL(fileURLWithPath: identityPath + ".mac-\(hello.deviceID.uuidString).pub")
+            pinnedKey = try? Data(contentsOf: url)
+        } else {
+            pinnedKey = try? KeychainDataStore(service: "com.remotepad.dev-client.paired-macs")
+                .data(for: hello.deviceID.uuidString)
+        }
+        guard pinnedKey == hello.identityPublicKey,
+              let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: hello.identityPublicKey) else {
+            return false
+        }
+        let transcript = ServerHelloTranscript.make(
+            clientDeviceID: deviceID,
+            clientNonce: clientNonce,
+            clientKeyAgreementPublicKey: clientKeyAgreementPublicKey,
+            serverDeviceID: hello.deviceID,
+            serverNonce: hello.nonce,
+            serverIdentityPublicKey: hello.identityPublicKey,
+            serverKeyAgreementPublicKey: hello.keyAgreementPublicKey
+        )
+        return publicKey.isValidSignature(hello.signature, for: transcript)
     }
 }
 

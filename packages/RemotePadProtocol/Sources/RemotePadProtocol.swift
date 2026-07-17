@@ -1,7 +1,7 @@
 import Foundation
 
 public enum RemotePadProtocol {
-    public static let currentVersion: UInt8 = 1
+    public static let currentVersion: UInt8 = 2
     public static let magic = Data([0x52, 0x50, 0x41, 0x44]) // RPAD
 }
 

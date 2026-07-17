@@ -220,18 +220,21 @@ public struct ClientHello: Codable, Equatable, Sendable {
     public var nonce: Data
     public var supportedProtocols: [UInt8]
     public var publicKey: Data?
+    public var keyAgreementPublicKey: Data
 
     public init(
         deviceID: UUID,
         nonce: Data,
         supportedProtocols: [UInt8] = [RemotePadProtocol.currentVersion],
-        publicKey: Data? = nil
+        publicKey: Data? = nil,
+        keyAgreementPublicKey: Data
     ) {
         self.kind = "client.hello"
         self.deviceID = deviceID
         self.nonce = nonce
         self.supportedProtocols = supportedProtocols
         self.publicKey = publicKey
+        self.keyAgreementPublicKey = keyAgreementPublicKey
     }
 
     enum CodingKeys: String, CodingKey {
@@ -240,6 +243,7 @@ public struct ClientHello: Codable, Equatable, Sendable {
         case nonce
         case supportedProtocols = "supported_protocols"
         case publicKey = "public_key"
+        case keyAgreementPublicKey = "key_agreement_public_key"
     }
 }
 
@@ -248,16 +252,25 @@ public struct ServerHello: Codable, Equatable, Sendable {
     public var deviceID: UUID
     public var nonce: Data
     public var capabilities: CapabilitySet
+    public var identityPublicKey: Data
+    public var keyAgreementPublicKey: Data
+    public var signature: Data
 
     public init(
         deviceID: UUID,
         nonce: Data,
-        capabilities: CapabilitySet
+        capabilities: CapabilitySet,
+        identityPublicKey: Data,
+        keyAgreementPublicKey: Data,
+        signature: Data
     ) {
         self.kind = "server.hello"
         self.deviceID = deviceID
         self.nonce = nonce
         self.capabilities = capabilities
+        self.identityPublicKey = identityPublicKey
+        self.keyAgreementPublicKey = keyAgreementPublicKey
+        self.signature = signature
     }
 
     enum CodingKeys: String, CodingKey {
@@ -265,6 +278,9 @@ public struct ServerHello: Codable, Equatable, Sendable {
         case deviceID = "device_id"
         case nonce
         case capabilities
+        case identityPublicKey = "identity_public_key"
+        case keyAgreementPublicKey = "key_agreement_public_key"
+        case signature
     }
 }
 
@@ -371,14 +387,42 @@ public enum AuthTranscript {
         clientNonce: Data,
         serverDeviceID: UUID,
         serverNonce: Data,
+        clientKeyAgreementPublicKey: Data,
+        serverKeyAgreementPublicKey: Data,
         protocolVersion: UInt8 = RemotePadProtocol.currentVersion
     ) -> Data {
-        var data = Data("RemotePad auth v1".utf8)
+        var data = Data("RemotePad auth v2".utf8)
         data.append(protocolVersion)
         data.appendUUID(clientDeviceID)
         data.appendLengthPrefixed(clientNonce)
         data.appendUUID(serverDeviceID)
         data.appendLengthPrefixed(serverNonce)
+        data.appendLengthPrefixed(clientKeyAgreementPublicKey)
+        data.appendLengthPrefixed(serverKeyAgreementPublicKey)
+        return data
+    }
+}
+
+public enum ServerHelloTranscript {
+    public static func make(
+        clientDeviceID: UUID,
+        clientNonce: Data,
+        clientKeyAgreementPublicKey: Data,
+        serverDeviceID: UUID,
+        serverNonce: Data,
+        serverIdentityPublicKey: Data,
+        serverKeyAgreementPublicKey: Data,
+        protocolVersion: UInt8 = RemotePadProtocol.currentVersion
+    ) -> Data {
+        var data = Data("RemotePad server hello v2".utf8)
+        data.append(protocolVersion)
+        data.appendUUID(clientDeviceID)
+        data.appendLengthPrefixed(clientNonce)
+        data.appendLengthPrefixed(clientKeyAgreementPublicKey)
+        data.appendUUID(serverDeviceID)
+        data.appendLengthPrefixed(serverNonce)
+        data.appendLengthPrefixed(serverIdentityPublicKey)
+        data.appendLengthPrefixed(serverKeyAgreementPublicKey)
         return data
     }
 }
@@ -388,6 +432,7 @@ public enum PairingTranscript {
         challenge: Data,
         ipadIdentity: DeviceIdentity,
         macDeviceID: UUID,
+        macPublicKey: Data,
         protocolVersion: UInt8 = RemotePadProtocol.currentVersion
     ) -> Data {
         var data = Data("RemotePad pairing v1".utf8)
@@ -398,6 +443,7 @@ public enum PairingTranscript {
         data.appendLengthPrefixed(Data(ipadIdentity.deviceType.rawValue.utf8))
         data.appendLengthPrefixed(ipadIdentity.publicKey)
         data.appendUUID(macDeviceID)
+        data.appendLengthPrefixed(macPublicKey)
         return data
     }
 }

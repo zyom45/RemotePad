@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/remotepad-browser-proxy.XXXXXX")"
+export REMOTEPAD_AGENT_IDENTITY_FILE="$LOG_DIR/agent-identity.json"
+export REMOTEPAD_DEV_CLIENT_IDENTITY_FILE="$LOG_DIR/dev-client-identity.json"
+export REMOTEPAD_AUDIT_LOG_FILE="$LOG_DIR/audit.jsonl"
 AGENT_LOG="$LOG_DIR/agent.log"
 SERVER_LOG="$LOG_DIR/server.log"
 PROXY_LOG="$LOG_DIR/proxy.log"
@@ -237,5 +240,6 @@ curl -sS --http1.1 -i --max-time 2 \
   "http://127.0.0.1:$LISTEN_PORT/ws" >"$WS_LOG" 2>>"$WS_LOG" || true
 require_contains "$WS_LOG" "101 Switching Protocols"
 require_contains "$WS_LOG" "Upgrade: websocket"
+require_contains "$REMOTEPAD_AUDIT_LOG_FILE" '"event":"browser.stream.opened"'
 
 log "passed"

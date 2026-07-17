@@ -16,7 +16,8 @@ struct RemotePadAgentCommand {
         }
 
         let configuration = AgentConfiguration.default
-        let agent = RemotePadAgent(configuration: configuration)
+        let auditLogger = try makeAuditLogger()
+        let agent = RemotePadAgent(configuration: configuration, auditLogger: auditLogger)
         let signalSources = installSignalHandlers {
             Task { @MainActor in
                 agent.stop()
@@ -24,6 +25,7 @@ struct RemotePadAgentCommand {
             }
         }
         try agent.start()
+        try await agent.waitUntilReady()
 
         print("RemotePad Agent")
         print("  service: \(configuration.serviceType)")
@@ -31,6 +33,11 @@ struct RemotePadAgentCommand {
         print("  discovery: \(configuration.publishesBonjour ? "bonjour" : "disabled")")
         print("  port: \(agent.port)")
         print("  device: \(configuration.deviceName)")
+        if configuration.networkExposure == .localNetwork {
+            for address in localIPv4Addresses() {
+                print("  connect: \(address):\(agent.port)")
+            }
+        }
         print("  press Ctrl-C to stop")
 
         await waitForever()
@@ -42,6 +49,7 @@ struct RemotePadAgentCommand {
 
         let store = TrustedDeviceStore()
         let pendingStore = PendingPairingRequestStore()
+        let auditLogger = try? makeAuditLogger()
         switch arguments[1] {
         case "--trust-device":
             guard arguments.count == 4,
@@ -53,6 +61,7 @@ struct RemotePadAgentCommand {
             }
 
             store.trust(publicKey: publicKey, for: deviceID)
+            auditLogger?.record(AuditEvent(event: "device.trusted", deviceID: deviceID, details: ["source": "cli"]))
             print("trusted device: \(deviceID)")
             print("fingerprint: \(fingerprint(publicKey))")
             return true
@@ -91,6 +100,7 @@ struct RemotePadAgentCommand {
 
             store.trust(publicKey: identity.publicKey, for: identity.deviceID)
             pendingStore.remove(deviceID: identity.deviceID)
+            auditLogger?.record(AuditEvent(event: "pairing.approved", deviceID: identity.deviceID, details: ["source": "cli"]))
             print("approved pairing: \(identity.deviceID)")
             print("device: \(identity.deviceName)")
             print("fingerprint: \(fingerprint(identity.publicKey))")
@@ -102,6 +112,7 @@ struct RemotePadAgentCommand {
                 return true
             }
             if pendingStore.remove(deviceID: deviceID) {
+                auditLogger?.record(AuditEvent(event: "pairing.rejected", deviceID: deviceID, details: ["source": "cli"]))
                 print("rejected pairing: \(deviceID)")
             } else {
                 print("no pending pairing request: \(deviceID)")
@@ -115,6 +126,7 @@ struct RemotePadAgentCommand {
             }
 
             if store.revoke(deviceID: deviceID) {
+                auditLogger?.record(AuditEvent(event: "device.revoked", deviceID: deviceID, details: ["source": "cli"]))
                 print("revoked device: \(deviceID)")
             } else {
                 print("device not trusted: \(deviceID)")
@@ -148,6 +160,7 @@ struct RemotePadAgentCommand {
         print("""
         usage:
           swift run remotepad-agent
+          swift run remotepad-agent --lan
           swift run remotepad-agent --trust-device <device-id> <public-key-base64>
           swift run remotepad-agent --list-trusted
           swift run remotepad-agent --list-pairing-requests
@@ -157,6 +170,13 @@ struct RemotePadAgentCommand {
           swift run remotepad-agent --clear-trusted-devices
           swift run remotepad-agent --open-pairing-approver
         """)
+    }
+
+    private static func makeAuditLogger() throws -> AuditLogger {
+        if let path = ProcessInfo.processInfo.environment["REMOTEPAD_AUDIT_LOG_FILE"] {
+            return try AuditLogger(fileURL: URL(fileURLWithPath: path))
+        }
+        return try AuditLogger()
     }
 
     private static func isValidSigningPublicKey(_ data: Data) -> Bool {
@@ -202,14 +222,23 @@ struct AgentConfiguration {
     static var `default`: AgentConfiguration {
         let identity: DeviceKeyIdentity
         do {
-            identity = try DeviceKeyIdentity.loadOrCreate(
-                service: "com.remotepad.mac-agent.identity",
-                legacyDefaults: .standard,
-                legacyDeviceIDKey: "RemotePadAgentDeviceID"
-            )
+            if let path = ProcessInfo.processInfo.environment["REMOTEPAD_AGENT_IDENTITY_FILE"] {
+                identity = try DeviceKeyIdentity.loadOrCreate(fileURL: URL(fileURLWithPath: path))
+            } else {
+                identity = try DeviceKeyIdentity.loadOrCreate(
+                    service: "com.remotepad.mac-agent.identity",
+                    legacyDefaults: .standard,
+                    legacyDeviceIDKey: "RemotePadAgentDeviceID"
+                )
+            }
         } catch {
             fatalError("RemotePad Agent could not load its Keychain identity: \(error)")
         }
+
+        let enablesLocalNetwork = CommandLine.arguments.contains("--lan") || environmentFlag(
+            "REMOTEPAD_ENABLE_LAN",
+            defaultValue: false
+        )
 
         return AgentConfiguration(
             identity: identity,
@@ -217,14 +246,14 @@ struct AgentConfiguration {
             serviceType: "_remotepad._tcp",
             capabilities: .mvp,
             permissions: .mvpDefault,
-            networkExposure: .loopbackOnly,
-            publishesBonjour: false,
+            networkExposure: enablesLocalNetwork ? .localNetwork : .loopbackOnly,
+            publishesBonjour: enablesLocalNetwork,
             allowsDevelopmentTrustOnFirstUse: false,
             opensPairingApproverOnRequest: environmentFlag(
                 "REMOTEPAD_OPEN_PAIRING_APPROVER",
                 defaultValue: true
             ),
-            listenPort: environmentPort("REMOTEPAD_AGENT_PORT")
+            listenPort: environmentPort("REMOTEPAD_AGENT_PORT") ?? (enablesLocalNetwork ? 53241 : nil)
         )
     }
 
@@ -255,6 +284,38 @@ struct AgentConfiguration {
     }
 }
 
+private func localIPv4Addresses() -> [String] {
+    var pointer: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&pointer) == 0, let first = pointer else { return [] }
+    defer { freeifaddrs(pointer) }
+
+    var addresses: [String] = []
+    for item in sequence(first: first, next: { $0.pointee.ifa_next }) {
+        let interface = item.pointee
+        guard let addressPointer = interface.ifa_addr,
+              addressPointer.pointee.sa_family == UInt8(AF_INET),
+              (interface.ifa_flags & UInt32(IFF_LOOPBACK)) == 0 else {
+            continue
+        }
+        var address = addressPointer.pointee
+        var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let status = getnameinfo(
+            &address,
+            socklen_t(addressPointer.pointee.sa_len),
+            &buffer,
+            socklen_t(buffer.count),
+            nil,
+            0,
+            NI_NUMERICHOST
+        )
+        if status == 0 {
+            let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+            addresses.append(String(decoding: bytes, as: UTF8.self))
+        }
+    }
+    return Array(Set(addresses)).sorted()
+}
+
 enum NetworkExposure: Sendable {
     case loopbackOnly
     case localNetwork
@@ -277,10 +338,13 @@ final class RemotePadAgent {
     private let terminalStore = TerminalStore()
     private let trustedDeviceStore = TrustedDeviceStore()
     private let pendingPairingStore = PendingPairingRequestStore()
+    private let auditLogger: AuditLogger
     private(set) var port: UInt16 = 0
+    private var startupError: NWError?
 
-    init(configuration: AgentConfiguration) {
+    init(configuration: AgentConfiguration, auditLogger: AuditLogger) {
         self.configuration = configuration
+        self.auditLogger = auditLogger
     }
 
     func start() throws {
@@ -323,6 +387,13 @@ final class RemotePadAgent {
         listener = nil
     }
 
+    func waitUntilReady() async throws {
+        while port == 0, startupError == nil {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        if let startupError { throw startupError }
+    }
+
     private func accept(_ nwConnection: NWConnection) {
         let connection = AgentConnection(
             nwConnection: nwConnection,
@@ -330,11 +401,18 @@ final class RemotePadAgent {
             terminalStore: terminalStore,
             trustedDeviceStore: trustedDeviceStore,
             pendingPairingStore: pendingPairingStore,
+            auditLogger: auditLogger,
             onClose: { [weak self] id in
+                self?.auditLogger.record(AuditEvent(event: "connection.closed", connectionID: id))
                 self?.connections[id] = nil
             }
         )
         connections[connection.id] = connection
+        auditLogger.record(AuditEvent(
+            event: "connection.accepted",
+            connectionID: connection.id,
+            details: ["endpoint": "\(nwConnection.endpoint)"]
+        ))
         connection.start()
     }
 
@@ -359,6 +437,7 @@ final class RemotePadAgent {
             }
         case .failed(let error):
             print("agent failed: \(error)")
+            startupError = error
             listener?.cancel()
         case .cancelled:
             print("agent stopped")
@@ -451,6 +530,7 @@ final class AgentConnection {
     private let terminalStore: TerminalStore
     private let trustedDeviceStore: TrustedDeviceStore
     private let pendingPairingStore: PendingPairingRequestStore
+    private let auditLogger: AuditLogger
     private let decoder = FrameStreamDecoder()
     private let onClose: (UUID) -> Void
     private var pendingPairingIdentity: DeviceIdentity?
@@ -459,6 +539,9 @@ final class AgentConnection {
     private var clientNonce: Data?
     private var serverNonce: Data?
     private var offeredClientPublicKey: Data?
+    private var clientKeyAgreementPublicKey: Data?
+    private let serverKeyExchange = SessionKeyExchange()
+    private var secureSession: SecureSession?
     private var sessionID: UUID?
     private var isAuthenticated = false
     private var browserStreams: [UUID: BrowserTCPStream] = [:]
@@ -469,6 +552,7 @@ final class AgentConnection {
         terminalStore: TerminalStore,
         trustedDeviceStore: TrustedDeviceStore,
         pendingPairingStore: PendingPairingRequestStore,
+        auditLogger: AuditLogger,
         onClose: @escaping (UUID) -> Void
     ) {
         self.nwConnection = nwConnection
@@ -476,6 +560,7 @@ final class AgentConnection {
         self.terminalStore = terminalStore
         self.trustedDeviceStore = trustedDeviceStore
         self.pendingPairingStore = pendingPairingStore
+        self.auditLogger = auditLogger
         self.onClose = onClose
     }
 
@@ -512,7 +597,8 @@ final class AgentConnection {
         if let data, !data.isEmpty {
             do {
                 let frames = try decoder.append(data)
-                for frame in frames {
+                for receivedFrame in frames {
+                    let frame = try secureSession?.open(frame: receivedFrame) ?? receivedFrame
                     try handleFrame(frame)
                 }
             } catch {
@@ -641,7 +727,8 @@ final class AgentConnection {
         let transcript = PairingTranscript.make(
             challenge: challenge,
             ipadIdentity: identity,
-            macDeviceID: configuration.deviceID
+            macDeviceID: configuration.deviceID,
+            macPublicKey: configuration.identity.publicKey
         )
         guard verify(signature: message.signature, for: transcript, publicKey: identity.publicKey) else {
             sendPairingResult(
@@ -655,6 +742,12 @@ final class AgentConnection {
         }
 
         pendingPairingStore.save(identity)
+        auditLogger.record(AuditEvent(
+            event: "pairing.requested",
+            connectionID: id,
+            deviceID: identity.deviceID,
+            details: ["device_name": identity.deviceName]
+        ))
         openPairingApproverIfNeeded()
         sendPairingResult(
             accepted: true,
@@ -734,6 +827,10 @@ final class AgentConnection {
             sendProtocolError(code: "permission_denied", message: "Browser proxy permission is not granted.", requestID: requestID)
             return
         }
+        guard isAllowedBrowserTarget(message.target) else {
+            sendProtocolError(code: "browser_target_denied", message: "Browser target must be Mac loopback.", requestID: requestID)
+            return
+        }
         guard browserStreams[message.streamID] == nil else {
             sendProtocolError(code: "browser_stream_exists", message: "Browser stream already exists.", requestID: requestID)
             return
@@ -752,6 +849,12 @@ final class AgentConnection {
         )
         browserStreams[message.streamID] = stream
         stream.start()
+        auditLogger.record(AuditEvent(
+            event: "browser.stream.opened",
+            connectionID: id,
+            deviceID: clientDeviceID,
+            details: ["target": "\(message.target.host):\(message.target.port)"]
+        ))
     }
 
     private func handleBrowserStreamData(
@@ -794,18 +897,38 @@ final class AgentConnection {
         clientDeviceID = message.deviceID
         clientNonce = message.nonce
         offeredClientPublicKey = message.publicKey
+        clientKeyAgreementPublicKey = message.keyAgreementPublicKey
         let nonce = Data.randomBytes(count: 32)
         serverNonce = nonce
+        let transcript = ServerHelloTranscript.make(
+            clientDeviceID: message.deviceID,
+            clientNonce: message.nonce,
+            clientKeyAgreementPublicKey: message.keyAgreementPublicKey,
+            serverDeviceID: configuration.deviceID,
+            serverNonce: nonce,
+            serverIdentityPublicKey: configuration.identity.publicKey,
+            serverKeyAgreementPublicKey: serverKeyExchange.publicKey
+        )
+        let signature: Data
+        do {
+            signature = try configuration.identity.sign(transcript)
+        } catch {
+            sendProtocolError(code: "identity_signing_failed", message: "Could not sign server hello.", requestID: requestID)
+            return
+        }
         let response = ServerHello(
             deviceID: configuration.deviceID,
             nonce: nonce,
-            capabilities: configuration.capabilities
+            capabilities: configuration.capabilities,
+            identityPublicKey: configuration.identity.publicKey,
+            keyAgreementPublicKey: serverKeyExchange.publicKey,
+            signature: signature
         )
         sendHeader(response, type: .response, channelID: 1, requestID: requestID)
     }
 
     private func handleAuthProof(_ message: AuthProof, requestID: UInt32) {
-        guard let clientDeviceID, let clientNonce, let serverNonce else {
+        guard let clientDeviceID, let clientNonce, let serverNonce, let clientKeyAgreementPublicKey else {
             sendAuthRejected(reason: "hello_required", requestID: requestID)
             return
         }
@@ -819,10 +942,26 @@ final class AgentConnection {
             clientDeviceID: clientDeviceID,
             clientNonce: clientNonce,
             serverDeviceID: configuration.deviceID,
-            serverNonce: serverNonce
+            serverNonce: serverNonce,
+            clientKeyAgreementPublicKey: clientKeyAgreementPublicKey,
+            serverKeyAgreementPublicKey: serverKeyExchange.publicKey
         )
         guard verify(signature: message.signature, for: transcript, publicKey: publicKey) else {
             sendAuthRejected(reason: "invalid_signature", requestID: requestID)
+            return
+        }
+
+        let encryptedSession: SecureSession
+        do {
+            encryptedSession = try SecureSession(
+                privateKey: serverKeyExchange.privateKey,
+                remotePublicKey: clientKeyAgreementPublicKey,
+                clientNonce: clientNonce,
+                serverNonce: serverNonce,
+                role: .server
+            )
+        } catch {
+            sendAuthRejected(reason: "key_agreement_failed", requestID: requestID)
             return
         }
 
@@ -836,6 +975,13 @@ final class AgentConnection {
             permissions: configuration.permissions
         )
         sendHeader(result, type: .response, channelID: 1, requestID: requestID)
+        secureSession = encryptedSession
+        auditLogger.record(AuditEvent(
+            event: "auth.accepted",
+            connectionID: id,
+            deviceID: clientDeviceID,
+            details: ["session_id": sessionID.uuidString, "transport": "e2e-v2"]
+        ))
     }
 
     private func trustedPublicKey(for deviceID: UUID) -> Data? {
@@ -862,6 +1008,12 @@ final class AgentConnection {
     }
 
     private func sendAuthRejected(reason: String, requestID: UInt32) {
+        auditLogger.record(AuditEvent(
+            event: "auth.rejected",
+            connectionID: id,
+            deviceID: clientDeviceID,
+            details: ["reason": reason]
+        ))
         let result = AuthResult(
             accepted: false,
             sessionID: nil,
@@ -896,6 +1048,12 @@ final class AgentConnection {
                 rows: message.rows
             )
             sendHeader(created, type: .response, channelID: channelID, requestID: requestID)
+            auditLogger.record(AuditEvent(
+                event: "terminal.created",
+                connectionID: id,
+                deviceID: clientDeviceID,
+                details: ["terminal_id": terminal.id.uuidString]
+            ))
         } catch {
             sendProtocolError(code: "terminal_create_failed", message: "\(error)", requestID: requestID)
         }
@@ -961,6 +1119,12 @@ final class AgentConnection {
 
         let attached = TerminalAttached(terminal: terminal.listItem)
         sendHeader(attached, type: .response, channelID: channelID, requestID: requestID)
+        auditLogger.record(AuditEvent(
+            event: "terminal.attached",
+            connectionID: id,
+            deviceID: clientDeviceID,
+            details: ["terminal_id": terminal.id.uuidString]
+        ))
         let replay = terminal.outputReplay()
         if !replay.isEmpty {
             sendTerminalOutput(terminalID: terminal.id, data: replay, channelID: channelID)
@@ -983,6 +1147,12 @@ final class AgentConnection {
 
         let closed = TerminalClosed(terminalID: message.terminalID, reason: "client_requested")
         sendHeader(closed, type: .response, channelID: channelID, requestID: requestID)
+        auditLogger.record(AuditEvent(
+            event: "terminal.closed",
+            connectionID: id,
+            deviceID: clientDeviceID,
+            details: ["terminal_id": message.terminalID.uuidString]
+        ))
     }
 
     private func handleBrowserRequest(
@@ -997,6 +1167,10 @@ final class AgentConnection {
         }
         guard configuration.permissions.browserProxy else {
             sendProtocolError(code: "permission_denied", message: "Browser proxy permission is not granted.", requestID: requestID)
+            return
+        }
+        guard isAllowedBrowserTarget(message.target) else {
+            sendProtocolError(code: "browser_target_denied", message: "Browser target must be Mac loopback.", requestID: requestID)
             return
         }
 
@@ -1022,6 +1196,10 @@ final class AgentConnection {
                 }
             }
         }
+    }
+
+    private func isAllowedBrowserTarget(_ target: BrowserTarget) -> Bool {
+        ["127.0.0.1", "localhost", "::1"].contains(target.host.lowercased())
     }
 
     private func sendTerminalOutput(terminalID: UUID, data: Data, channelID: UInt32) {
@@ -1059,14 +1237,15 @@ final class AgentConnection {
         payload: Data = Data()
     ) {
         do {
-            let data = try FrameCodec.encodeHeader(
+            let plaintext = try FrameCodec.decode(FrameCodec.encodeHeader(
                 header,
                 type: type,
                 flags: flags,
                 channelID: channelID,
                 requestID: requestID,
                 payload: payload
-            )
+            ))
+            let data = try secureSession?.seal(frame: plaintext) ?? FrameCodec.encode(plaintext)
             nwConnection.send(content: data, completion: .contentProcessed { [weak self] error in
                 if let error {
                     Task { @MainActor in

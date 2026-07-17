@@ -63,7 +63,8 @@ import Testing
     let transcript = PairingTranscript.make(
         challenge: Data([0x01, 0x02, 0x03]),
         ipadIdentity: identity,
-        macDeviceID: UUID(uuidString: "00000000-0000-0000-0000-0000000000bb")!
+        macDeviceID: UUID(uuidString: "00000000-0000-0000-0000-0000000000bb")!,
+        macPublicKey: Data(repeating: 0xbb, count: 32)
     )
 
     let signature = try privateKey.signature(for: transcript)
@@ -76,7 +77,13 @@ import Testing
     let deviceID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     let nonce = Data([1, 2, 3, 4])
     let publicKey = Data(repeating: 0xaa, count: 32)
-    let hello = ClientHello(deviceID: deviceID, nonce: nonce, publicKey: publicKey)
+    let keyAgreementPublicKey = Data(repeating: 0xbb, count: 32)
+    let hello = ClientHello(
+        deviceID: deviceID,
+        nonce: nonce,
+        publicKey: publicKey,
+        keyAgreementPublicKey: keyAgreementPublicKey
+    )
 
     let clientFrame = try FrameCodec.decode(
         try FrameCodec.encodeHeader(hello, type: .request, channelID: 1)
@@ -89,7 +96,10 @@ import Testing
     let server = ServerHello(
         deviceID: deviceID,
         nonce: Data([5, 6, 7, 8]),
-        capabilities: .mvp
+        capabilities: .mvp,
+        identityPublicKey: publicKey,
+        keyAgreementPublicKey: Data(repeating: 0xcc, count: 32),
+        signature: Data(repeating: 0xdd, count: 64)
     )
     let serverFrame = try FrameCodec.decode(
         try FrameCodec.encodeHeader(server, type: .response, channelID: 1)
@@ -108,13 +118,17 @@ import Testing
         clientDeviceID: clientDeviceID,
         clientNonce: Data([0x01, 0x02]),
         serverDeviceID: serverDeviceID,
-        serverNonce: Data([0x03, 0x04])
+        serverNonce: Data([0x03, 0x04]),
+        clientKeyAgreementPublicKey: Data(repeating: 0x05, count: 32),
+        serverKeyAgreementPublicKey: Data(repeating: 0x06, count: 32)
     )
     let second = AuthTranscript.make(
         clientDeviceID: clientDeviceID,
         clientNonce: Data([0x01, 0x02]),
         serverDeviceID: serverDeviceID,
-        serverNonce: Data([0x03, 0x04])
+        serverNonce: Data([0x03, 0x04]),
+        clientKeyAgreementPublicKey: Data(repeating: 0x05, count: 32),
+        serverKeyAgreementPublicKey: Data(repeating: 0x06, count: 32)
     )
 
     #expect(first == second)
@@ -128,7 +142,9 @@ import Testing
         clientDeviceID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
         clientNonce: Data([0x01, 0x02]),
         serverDeviceID: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
-        serverNonce: Data([0x03, 0x04])
+        serverNonce: Data([0x03, 0x04]),
+        clientKeyAgreementPublicKey: Data(repeating: 0x05, count: 32),
+        serverKeyAgreementPublicKey: Data(repeating: 0x06, count: 32)
     )
 
     let signature = try privateKey.signature(for: transcript)

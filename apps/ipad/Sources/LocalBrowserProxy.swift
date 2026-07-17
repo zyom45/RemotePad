@@ -43,6 +43,36 @@ struct AppIdentity: Sendable {
     func sign(_ data: Data) -> Data {
         (try? privateKey.signature(for: data)) ?? Data()
     }
+
+    func pinMac(deviceID: UUID, publicKey: Data) throws {
+        guard (try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey)) != nil else {
+            throw RemotePadSecurityError.invalidIdentity
+        }
+        try KeychainDataStore(service: "com.remotepad.ipad.paired-macs")
+            .set(publicKey, for: deviceID.uuidString)
+    }
+
+    func pinnedMacPublicKey(deviceID: UUID) -> Data? {
+        try? KeychainDataStore(service: "com.remotepad.ipad.paired-macs")
+            .data(for: deviceID.uuidString)
+    }
+
+    func verifiesServerHello(_ hello: ServerHello, clientNonce: Data, clientKeyAgreementPublicKey: Data) -> Bool {
+        guard pinnedMacPublicKey(deviceID: hello.deviceID) == hello.identityPublicKey,
+              let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: hello.identityPublicKey) else {
+            return false
+        }
+        let transcript = ServerHelloTranscript.make(
+            clientDeviceID: deviceID,
+            clientNonce: clientNonce,
+            clientKeyAgreementPublicKey: clientKeyAgreementPublicKey,
+            serverDeviceID: hello.deviceID,
+            serverNonce: hello.nonce,
+            serverIdentityPublicKey: hello.identityPublicKey,
+            serverKeyAgreementPublicKey: hello.keyAgreementPublicKey
+        )
+        return publicKey.isValidSignature(hello.signature, for: transcript)
+    }
 }
 
 final class LocalBrowserProxy: @unchecked Sendable {
@@ -135,10 +165,14 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
     private let onClose: (UUID) -> Void
     private let decoder = FrameStreamDecoder()
     private let streamID = UUID()
+    private let keyExchange = SessionKeyExchange()
 
     private var clientNonce: Data?
     private var serverDeviceID: UUID?
     private var serverNonce: Data?
+    private var serverKeyAgreementPublicKey: Data?
+    private var pendingSecureSession: SecureSession?
+    private var secureSession: SecureSession?
     private var didOpenStream = false
     private var isClosed = false
     private var pendingLocalData: [Data] = []
@@ -210,7 +244,8 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
         let hello = ClientHello(
             deviceID: identity.deviceID,
             nonce: nonce,
-            publicKey: identity.publicKey
+            publicKey: identity.publicKey,
+            keyAgreementPublicKey: keyExchange.publicKey
         )
         sendToAgent(hello, type: .request, channelID: 1, requestID: 1)
     }
@@ -227,7 +262,8 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
             if let data, !data.isEmpty {
                 do {
                     let frames = try self.decoder.append(data)
-                    for frame in frames {
+                    for receivedFrame in frames {
+                        let frame = try self.secureSession?.open(frame: receivedFrame) ?? receivedFrame
                         try self.handleAgentFrame(frame)
                     }
                 } catch {
@@ -250,8 +286,26 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
         switch header.kind {
         case "server.hello":
             let hello = try FrameCodec.decodeHeader(ServerHello.self, from: frame)
+            guard let clientNonce,
+                  identity.verifiesServerHello(
+                    hello,
+                    clientNonce: clientNonce,
+                    clientKeyAgreementPublicKey: keyExchange.publicKey
+                  ) else {
+                onStatus("Untrusted Mac identity")
+                close()
+                return
+            }
             serverDeviceID = hello.deviceID
             serverNonce = hello.nonce
+            serverKeyAgreementPublicKey = hello.keyAgreementPublicKey
+            pendingSecureSession = try SecureSession(
+                privateKey: keyExchange.privateKey,
+                remotePublicKey: hello.keyAgreementPublicKey,
+                clientNonce: clientNonce,
+                serverNonce: hello.nonce,
+                role: .client
+            )
             sendAuthProof()
         case "auth.result":
             let result = try FrameCodec.decodeHeader(AuthResult.self, from: frame)
@@ -260,6 +314,8 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
                 close()
                 return
             }
+            secureSession = pendingSecureSession
+            pendingSecureSession = nil
             openBrowserStream()
         case "browser.stream.data":
             sendToLocal(frame.payload)
@@ -275,7 +331,7 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
     }
 
     private func sendAuthProof() {
-        guard let clientNonce, let serverDeviceID, let serverNonce else {
+        guard let clientNonce, let serverDeviceID, let serverNonce, let serverKeyAgreementPublicKey else {
             close()
             return
         }
@@ -283,7 +339,9 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
             clientDeviceID: identity.deviceID,
             clientNonce: clientNonce,
             serverDeviceID: serverDeviceID,
-            serverNonce: serverNonce
+            serverNonce: serverNonce,
+            clientKeyAgreementPublicKey: keyExchange.publicKey,
+            serverKeyAgreementPublicKey: serverKeyAgreementPublicKey
         )
         sendToAgent(
             AuthProof(signature: identity.sign(transcript)),
@@ -370,13 +428,14 @@ final class LocalBrowserProxyConnection: @unchecked Sendable {
     ) {
         guard !isClosed else { return }
         do {
-            let data = try FrameCodec.encodeHeader(
+            let plaintext = try FrameCodec.decode(FrameCodec.encodeHeader(
                 header,
                 type: type,
                 channelID: channelID,
                 requestID: requestID,
                 payload: payload
-            )
+            ))
+            let data = try secureSession?.seal(frame: plaintext) ?? FrameCodec.encode(plaintext)
             agentConnection.send(content: data, completion: .contentProcessed { [weak self] error in
                 if error != nil {
                     self?.close()

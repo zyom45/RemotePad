@@ -49,6 +49,21 @@ public struct DeviceKeyIdentity: Sendable {
         return identity
     }
 
+    public static func loadOrCreate(fileURL: URL) throws -> DeviceKeyIdentity {
+        if let data = try? Data(contentsOf: fileURL) {
+            return try decode(data)
+        }
+
+        let identity = DeviceKeyIdentity(deviceID: UUID(), privateKey: Curve25519.Signing.PrivateKey())
+        let data = try encode(identity)
+        try data.write(to: fileURL, options: [.atomic])
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o600))],
+            ofItemAtPath: fileURL.path
+        )
+        return identity
+    }
+
     private static let storageAccount = "device-identity-v1"
 
     private struct StoredIdentity: Codable {
@@ -130,6 +145,13 @@ public struct KeychainDataStore: Sendable {
         attributes.forEach { insertion[$0.key] = $0.value }
         let addStatus = SecItemAdd(insertion as CFDictionary, nil)
         guard addStatus == errSecSuccess else { throw RemotePadSecurityError.keychain(addStatus) }
+    }
+
+    public func remove(account: String) throws {
+        let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw RemotePadSecurityError.keychain(status)
+        }
     }
 
     private func baseQuery(account: String) -> [String: Any] {

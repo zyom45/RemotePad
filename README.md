@@ -23,7 +23,9 @@ The initial implementation starts with the shared protocol layer used by the fut
 - Pairing store tests
 - Unit tests for frame, control, terminal, and browser proxy messages
 
-Current authentication uses a signed nonce challenge. The client sends a Curve25519 signing public key in `ClientHello`, signs the auth transcript, and the agent verifies `AuthProof.signature`. The iPad app and development client can submit signed pairing requests. The Mac can approve requests through the SwiftUI pairing approver or explicit development CLI commands. The agent remains loopback-only without Bonjour until the production security model, audit log, and LAN exposure gate are complete.
+Current authentication uses a signed nonce challenge. The client sends a Curve25519 signing public key in `ClientHello`, signs the auth transcript, and the agent verifies `AuthProof.signature`. The iPad app and development client can submit signed pairing requests. The Mac can approve requests through the SwiftUI pairing approver or explicit development CLI commands. The agent is loopback-only by default; E2E-protected LAN and Bonjour exposure require the explicit `--lan` gate.
+
+Authenticated sessions use an application-layer E2E channel: ephemeral X25519 key agreement, signed handshake transcripts, HKDF-SHA256 directional keys, and ChaCha20-Poly1305 encrypted frames with replay counters. The relay or local network transport cannot read or modify Terminal and BrowserProxy traffic.
 
 To pair the iPad app:
 
@@ -105,6 +107,14 @@ swift run remotepad-agent --approve-pairing <ipad-device-id>
 
 For simulator development with the current loopback-only agent, use `127.0.0.1` as the agent host. Real iPad device testing requires the later LAN-safe pairing/agent exposure work.
 
+For a real iPad on the same trusted local network, start the E2E-only LAN listener explicitly:
+
+```sh
+swift run remotepad-agent --lan
+```
+
+The agent prints one or more `connect: <Mac-IP>:53241` addresses. Enter that address and port in the iPad app, request pairing, approve it on the Mac, then connect the Terminal or Browser workspace. LAN and Bonjour exposure remain disabled unless `--lan` or `REMOTEPAD_ENABLE_LAN=1` is supplied.
+
 ## Local Handshake Check
 
 Start the development agent:
@@ -176,3 +186,4 @@ The remaining product path is moving this local listener into the iPad app and v
 - [Progress](docs/progress.md)
 - [Technical Selection](docs/technical-selection.md)
 - [Protocol](docs/protocol.md)
+- [Security](docs/security.md)

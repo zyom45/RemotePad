@@ -46,6 +46,7 @@ let package = Package(
         ),
         .target(
             name: "RemotePadSecurity",
+            dependencies: ["RemotePadProtocol"],
             path: "packages/RemotePadSecurity/Sources"
         ),
         .executableTarget(
@@ -60,7 +61,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "RemotePadDevClient",
-            dependencies: ["RemotePadProtocol"],
+            dependencies: ["RemotePadProtocol", "RemotePadSecurity"],
             path: "tools/dev-client/Sources"
         ),
         .testTarget(
