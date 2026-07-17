@@ -18,6 +18,8 @@ targets:
     dependencies:
       - package: RemotePadProtocol
         product: RemotePadProtocol
+      - package: RemotePadProtocol
+        product: RemotePadSecurity
       - package: SwiftTerm
         product: SwiftTerm
     settings:

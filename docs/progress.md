@@ -154,7 +154,7 @@ Observed results:
 - Terminal printed `__REMOTEPAD_READY__`.
 - Reattached terminal printed `__REMOTEPAD_ATTACHED__` and closed cleanly on explicit request.
 - Verification device was revoked after the test.
-- `swift test` passed with 34 tests.
+- `swift test` passed, including protocol, pairing-store, and device-identity tests.
 
 ## Not Yet Implemented
 

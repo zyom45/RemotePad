@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import Network
 import RemotePadProtocol
+import RemotePadSecurity
 
 struct AppIdentity: Sendable {
     let deviceID: UUID
@@ -26,23 +27,17 @@ struct AppIdentity: Sendable {
     }
 
     static func loadOrCreate() -> AppIdentity {
-        let defaults = UserDefaults.standard
-        let deviceIDKey = "RemotePadAppDeviceID"
-        let privateKeyKey = "RemotePadAppPrivateKey"
-
-        if let deviceIDString = defaults.string(forKey: deviceIDKey),
-           let deviceID = UUID(uuidString: deviceIDString),
-           let privateKeyString = defaults.string(forKey: privateKeyKey),
-           let privateKeyData = Data(base64Encoded: privateKeyString),
-           let privateKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData) {
-            return AppIdentity(deviceID: deviceID, privateKey: privateKey)
+        do {
+            let identity = try DeviceKeyIdentity.loadOrCreate(
+                service: "com.remotepad.ipad.identity",
+                legacyDefaults: .standard,
+                legacyDeviceIDKey: "RemotePadAppDeviceID",
+                legacyPrivateKeyKey: "RemotePadAppPrivateKey"
+            )
+            return AppIdentity(deviceID: identity.deviceID, privateKey: identity.privateKey)
+        } catch {
+            fatalError("RemotePad could not load its Keychain identity: \(error)")
         }
-
-        let deviceID = UUID()
-        let privateKey = Curve25519.Signing.PrivateKey()
-        defaults.set(deviceID.uuidString, forKey: deviceIDKey)
-        defaults.set(privateKey.rawRepresentation.base64EncodedString(), forKey: privateKeyKey)
-        return AppIdentity(deviceID: deviceID, privateKey: privateKey)
     }
 
     func sign(_ data: Data) -> Data {

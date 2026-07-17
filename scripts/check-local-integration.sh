@@ -145,6 +145,7 @@ require_contains "$TERMINAL_ATTACH_LOG" "received terminal.closed"
 
 log "running unit tests"
 swift test >"$TEST_LOG" 2>&1
-require_contains "$TEST_LOG" "Test run with 34 tests"
+require_contains "$TEST_LOG" "Test run with"
+require_contains "$TEST_LOG" "tests in 0 suites passed"
 
 log "passed"

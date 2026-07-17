@@ -5,6 +5,7 @@ import CryptoKit
 import Network
 import RemotePadAgentSupport
 import RemotePadProtocol
+import RemotePadSecurity
 
 @main
 struct RemotePadAgentCommand {
@@ -187,7 +188,7 @@ struct RemotePadAgentCommand {
 }
 
 struct AgentConfiguration {
-    var deviceID: UUID
+    var identity: DeviceKeyIdentity
     var deviceName: String
     var serviceType: String
     var capabilities: CapabilitySet
@@ -199,8 +200,19 @@ struct AgentConfiguration {
     var listenPort: UInt16?
 
     static var `default`: AgentConfiguration {
-        AgentConfiguration(
-            deviceID: persistedOrGeneratedDeviceID(),
+        let identity: DeviceKeyIdentity
+        do {
+            identity = try DeviceKeyIdentity.loadOrCreate(
+                service: "com.remotepad.mac-agent.identity",
+                legacyDefaults: .standard,
+                legacyDeviceIDKey: "RemotePadAgentDeviceID"
+            )
+        } catch {
+            fatalError("RemotePad Agent could not load its Keychain identity: \(error)")
+        }
+
+        return AgentConfiguration(
+            identity: identity,
             deviceName: Host.current().localizedName ?? "RemotePad Mac",
             serviceType: "_remotepad._tcp",
             capabilities: .mvp,
@@ -216,17 +228,8 @@ struct AgentConfiguration {
         )
     }
 
-    private static func persistedOrGeneratedDeviceID() -> UUID {
-        // Temporary development identity. The production agent will store this in Keychain.
-        let defaults = UserDefaults.standard
-        let key = "RemotePadAgentDeviceID"
-        if let value = defaults.string(forKey: key), let uuid = UUID(uuidString: value) {
-            return uuid
-        }
-
-        let uuid = UUID()
-        defaults.set(uuid.uuidString, forKey: key)
-        return uuid
+    var deviceID: UUID {
+        identity.deviceID
     }
 
     private static func environmentFlag(_ key: String, defaultValue: Bool) -> Bool {
@@ -616,7 +619,7 @@ final class AgentConnection {
                 deviceID: configuration.deviceID,
                 deviceName: configuration.deviceName,
                 deviceType: .mac,
-                publicKey: Data(),
+                publicKey: configuration.identity.publicKey,
                 createdAt: Date()
             )
         )
